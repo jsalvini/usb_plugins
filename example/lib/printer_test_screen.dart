@@ -184,9 +184,9 @@ class _PrinterTestScreenState extends State<PrinterTestScreen> {
           } else {
             log('ERROR: No hay papel en la impresora');
           }
-setState(() {
-          paperOut = paper['paperPresent'];
-          paperNearEnd = paper['paperNearEnd'];
+          setState(() {
+            paperOut = paper['paperPresent'];
+            paperNearEnd = paper['paperNearEnd'];
           });
         } else {
           log('No se pudo determinar el estado del papel: ${paperStatus['error'] ?? 'Error desconocido'}');
