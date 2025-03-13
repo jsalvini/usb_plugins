@@ -88,9 +88,9 @@ class UsbPlugin {
           if (deviceDescriptor.ref.iManufacturer > 0) {
             manufacturer = _getStringDescriptor(
                 handle, deviceDescriptor.ref.iManufacturer);
-            //print("Fabricante: $manufacturer");
+            //log("Fabricante: $manufacturer");
           } else {
-            //print("El dispositivo no proporciona un descriptor de fabricante.");
+            //log("El dispositivo no proporciona un descriptor de fabricante.");
           }
 
           if (deviceDescriptor.ref.iProduct > 0) {
@@ -745,196 +745,10 @@ class UsbPlugin {
     return result;
   }
 
-  // Función para consultar el estado de la impresora
-  // Función para consultar el estado de la impresora 3nstar RPT-008
-  Future<Map<String, dynamic>> checkPrinterStatus(
+  Future<Map<String, dynamic>> getPrinterStatus(
     int vendorId,
     int productId,
-  ) async {
-    Map<String, dynamic> result = {
-      'isOnline': false,
-      'paperOut': false,
-      'coverOpen': false,
-      'paperNearEnd': false,
-      'rawData': [], // Almacenará los bytes crudos de respuesta
-      'debugInfo': '' // Almacenará información de depuración
-    };
-
-    String debugInfo = '';
-
-    try {
-      // Para 3nstar RPT-008, usamos DLE EOT n para consultar el estado
-      // n = 1: Transmite estado de la impresora
-      List<int> statusCommand = [0x10, 0x04, 0x01]; // DLE EOT 1
-      debugInfo +=
-          "Enviando comando de estado (DLE EOT 1): ${statusCommand.map((e) => '0x${e.toRadixString(16)}').join(', ')}\n";
-
-      var printerStatus = await printEscPos(
-        vendorId,
-        productId,
-        statusCommand,
-        timeout: 3000,
-        expectResponse: true,
-      );
-
-      debugInfo += "Respuesta recibida: $printerStatus\n";
-
-      if (printerStatus['success'] == true) {
-        List<int>? response = printerStatus['data'] as List<int>?;
-
-        if (response != null && response.isNotEmpty) {
-          result['rawData'] = response;
-          debugInfo +=
-              "Bytes recibidos: ${response.map((e) => '0x${e.toRadixString(16)}').join(', ')}\n";
-
-          int status = response[0];
-          debugInfo +=
-              "Primer byte de estado: 0x${status.toRadixString(16)} (binario: ${status.toRadixString(2).padLeft(8, '0')})\n";
-
-          // Evaluación de cada bit relevante para depuración
-          bool bit3 = ((status >> 3) & 1) == 0;
-          bool bit4 = ((status >> 4) & 1) == 1;
-          bool bit5 = ((status >> 5) & 1) == 1;
-
-          debugInfo += "Bit 3 (En línea): ${bit3 ? 'Activo' : 'Inactivo'}\n";
-          debugInfo +=
-              "Bit 4 (Tapa abierta): ${bit4 ? 'Activo' : 'Inactivo'}\n";
-          debugInfo += "Bit 5 (Sin papel): ${bit5 ? 'Activo' : 'Inactivo'}\n";
-
-          // Establecer estados
-          result['isOnline'] = bit3;
-          result['coverOpen'] = bit4;
-          result['paperOut'] = bit5;
-        } else {
-          debugInfo +=
-              "No se recibieron datos de respuesta o respuesta vacía\n";
-        }
-      } else {
-        debugInfo +=
-            "Error al enviar comando de estado: ${printerStatus['error'] ?? 'Desconocido'}\n";
-      }
-
-      // Consultar estado del papel - DLE EOT 4
-      List<int> paperStatusCommand = [0x10, 0x04, 0x04]; // DLE EOT 4
-      debugInfo +=
-          "Enviando comando de estado de papel (DLE EOT 4): ${paperStatusCommand.map((e) => '0x${e.toRadixString(16)}').join(', ')}\n";
-
-      var paperStatus = await printEscPos(
-        vendorId,
-        productId,
-        paperStatusCommand,
-        timeout: 3000,
-        // No uses autoInitialize ni autoCut para comandos de estado
-      );
-
-      debugInfo += "Respuesta recibida para estado del papel: $paperStatus\n";
-
-      if (paperStatus['success'] == true) {
-        List<int>? response = paperStatus['data'] as List<int>?;
-
-        if (response != null && response.isNotEmpty) {
-          result['rawPaperData'] = response;
-          debugInfo +=
-              "Bytes recibidos para papel: ${response.map((e) => '0x${e.toRadixString(16)}').join(', ')}\n";
-
-          int status = response[0];
-          debugInfo +=
-              "Primer byte de estado de papel: 0x${status.toRadixString(16)} (binario: ${status.toRadixString(2).padLeft(8, '0')})\n";
-
-          // Evaluación de cada bit relevante para depuración
-          bool bit6 = ((status >> 6) & 1) == 1;
-          debugInfo +=
-              "Bit 6 (Papel por acabarse): ${bit6 ? 'Activo' : 'Inactivo'}\n";
-
-          // Establecer estado
-          result['paperNearEnd'] = bit6;
-        } else {
-          debugInfo +=
-              "No se recibieron datos de respuesta para estado del papel o respuesta vacía\n";
-        }
-      } else {
-        debugInfo +=
-            "Error al enviar comando de estado de papel: ${paperStatus['error'] ?? 'Desconocido'}\n";
-      }
-
-      // Probar comandos alternativos para esta impresora específica
-      // Algunas impresoras 3nstar usan GS r n en lugar de DLE EOT
-      debugInfo += "\nPROBANDO COMANDOS ALTERNATIVOS:\n";
-
-      List<int> altStatusCommand = [0x1D, 0x72, 0x01]; // GS r 1
-      debugInfo +=
-          "Enviando comando alternativo (GS r 1): ${altStatusCommand.map((e) => '0x${e.toRadixString(16)}').join(', ')}\n";
-
-      var altStatus = await printEscPos(vendorId, productId, altStatusCommand,
-          timeout: 3000);
-
-      debugInfo += "Respuesta recibida para comando alternativo: $altStatus\n";
-
-      if (altStatus['success'] == true) {
-        List<int>? response = altStatus['data'] as List<int>?;
-        if (response != null && response.isNotEmpty) {
-          debugInfo +=
-              "Bytes recibidos para comando alternativo: ${response.map((e) => '0x${e.toRadixString(16)}').join(', ')}\n";
-        }
-      }
-
-      // Guardar información de depuración en el resultado
-      result['debugInfo'] = debugInfo;
-
-      return result;
-    } catch (e) {
-      debugInfo += "EXCEPCIÓN: $e\n";
-      return {
-        'error': e.toString(),
-        'isOnline': false,
-        'paperOut': true,
-        'coverOpen': false,
-        'paperNearEnd': false,
-        'debugInfo': debugInfo
-      };
-    }
-  }
-
-  // Función para interpretar los datos de estado recibidos
-  Map<String, dynamic> interpretPrinterStatus(List<int> statusData) {
-    Map<String, dynamic> status = {};
-
-    if (statusData.isEmpty) {
-      return {'error': 'No se recibieron datos de estado'};
-    }
-
-    // Primer byte del estado de la impresora (según las imágenes del manual)
-    int printerStatus = statusData[0];
-
-    // Según la imagen del manual para n = 1 (Printer Status)
-    status['cashDrawerOpen'] = (printerStatus & 0x04) != 0; // Bit 2
-    status['offline'] = (printerStatus & 0x08) != 0; // Bit 3 (Off-line)
-
-    // Información adicional si hay más bytes en la respuesta
-    if (statusData.length > 1) {
-      // Si la impresora envía más información, como en el manual
-      //int additionalStatus = statusData[1];
-
-      // Puedes agregar más interpretaciones según el manual
-      // Por ejemplo, para n = 2 (Off-line Status)
-      if (statusData.length > 1) {
-        int offlineStatus = statusData[1];
-        status['coverOpen'] = (offlineStatus & 0x04) != 0; // Bit 2
-        status['paperFeedButton'] = (offlineStatus & 0x08) != 0; // Bit 3
-      }
-    }
-
-    // Información de depuración
-    status['rawData'] = statusData
-        .map((e) => '0x${e.toRadixString(16).padLeft(2, '0')}')
-        .join(', ');
-
-    return status;
-  }
-
-  void initializeAndGetStatus(
-    int vendorId,
-    int productId, {
+    List<int> command, {
     int interfaceNumber = 0,
     int endpointAddress = 0x01,
     int readEndpointAddress = 0x81,
@@ -946,8 +760,12 @@ class UsbPlugin {
     final Pointer<libusb_device_handle>? handleNullable =
         openDevice(vendorId, productId);
     if (handleNullable == nullptr || handleNullable == null) {
-      //return {'success': false, 'error': 'No se pudo abrir el dispositivo'};
-      return;
+      return {
+        'success': false,
+        'error': 'No se pudo abrir el dispositivo',
+        'isConnected': false,
+        'statusType': command.length >= 3 ? command[2] : 0
+      };
     }
 
     // Aquí convertimos de Pointer? a Pointer, ahora que sabemos que no es nulo
@@ -955,10 +773,10 @@ class UsbPlugin {
 
     Map<String, dynamic> statusInfo = {
       'success': false,
+      'isConnected': false,
       'rawData': null,
-      'status': {}
+      'statusType': command.length >= 3 ? command[2] : 0
     };
-
     try {
       // Verificar si hay un kernel driver activo y desconectarlo si es necesario
       int hasKernelDriver = 0;
@@ -1005,10 +823,13 @@ class UsbPlugin {
       }
 
       if (claimResult < 0) {
-        return;
+        return {
+          'success': false,
+          'error': 'No se pudo reclamar la interfaz',
+          'isConnected': false,
+          'statusType': command.length >= 3 ? command[2] : 0
+        };
       }
-
-      List<int> command = [0x10, 0x04, 0x01];
 
       final buffer = calloc<Uint8>(command.length);
       final bufferList = buffer.asTypedList(command.length);
@@ -1016,7 +837,7 @@ class UsbPlugin {
 
       final transferredPtr = calloc<Int>();
 
-      log("Enviando comando ${command.length} bytes al endpoint $endpointAddress...");
+      log("Enviando comando $command...");
       int transferResult = _bindings.libusb_bulk_transfer(
           handle,
           endpointAddress,
@@ -1025,35 +846,38 @@ class UsbPlugin {
           transferredPtr,
           timeout);
 
-      await Future.delayed(Duration(milliseconds: 5000));
+      await Future.delayed(Duration(milliseconds: 100));
 
-      final bytesSent = transferredPtr.value;
+      //final bytesSent = transferredPtr.value;
 
       calloc.free(buffer);
       calloc.free(transferredPtr);
 
       if (transferResult < 0) {
-        statusInfo['error'] = 'Error al leer respuesta: $transferResult';
+        String errorDescription = _getUsbErrorDescription(transferResult);
+        return {
+          'success': false,
+          'error':
+              'Error al enviar comando: $command, detalle: $errorDescription',
+          'isConnected': false,
+          'statusType': command.length >= 3 ? command[2] : 0
+        };
       }
 
-      log("Transferencia exitosa: $bytesSent bytes enviados");
+      //log("Transferencia exitosa: $bytesSent bytes enviados");
 
       Uint8List buffer2 = Uint8List(512);
-      // Usar UnsignedChar en lugar de Uint8
       final Pointer<UnsignedChar> dataPointer =
           malloc.allocate<UnsignedChar>(buffer2.length);
-      // Copiar los datos del Uint8List al puntero
       for (var i = 0; i < buffer2.length; i++) {
         dataPointer[i] = buffer[i];
       }
 
-      // Crear un puntero para recibir la cantidad de bytes transferidos
       final Pointer<Int> transferredPointer = malloc.allocate<Int>(1);
-      // Inicializar a cero
       transferredPointer.value = 0;
 
       // Llamar a la función correctamente
-      int result = _bindings.libusb_bulk_transfer(
+      int readResult = _bindings.libusb_bulk_transfer(
         handle, // libusb_device_handle*
         0x81, // unsigned char endpoint
         dataPointer, // unsigned char* data
@@ -1063,30 +887,80 @@ class UsbPlugin {
       );
 
       // Leer cuántos bytes se transfirieron
-      int bytesRead = transferredPointer.value;
+      int bytesReceived = transferredPointer.value;
 
-      // Copiar los datos recibidos de vuelta a un Uint8List
-      Uint8List receivedData = Uint8List(bytesRead);
-      for (var i = 0; i < bytesRead; i++) {
-        receivedData[i] = dataPointer[i];
+      if (readResult == 0 && bytesReceived > 0) {
+        // Copiar los datos recibidos de vuelta a un Uint8List
+        Uint8List receivedData = Uint8List(bytesReceived);
+        for (var i = 0; i < bytesReceived; i++) {
+          receivedData[i] = dataPointer[i];
+        }
+
+        // Determinar qué tipo de comando es según el tercer byte
+        int statusType = command.length >= 3 ? command[2] : 0;
+
+        statusInfo['success'] = true;
+        statusInfo['isConnected'] = true;
+        statusInfo['rawData'] = receivedData;
+        statusInfo['binaryResponse'] =
+            readResult.toRadixString(2).padLeft(8, '0');
+        statusInfo['statusType'] = statusType;
+
+        // Interpretar los datos según el tipo de estado
+        if (bytesReceived > 0) {
+          //interpretPrinterStatus(receivedData[0]);
+          //bool isOnline = (receivedData[0] & (1 << 3)) == 0;
+          //log('Impresora en línea: $isOnline');
+          //statusInfo['status'] = 'Impresora en línea: $isOnline';
+
+          // Interpretar la respuesta según el tipo de comando
+          switch (statusType) {
+            case 1: // Estado de la impresora [0x10, 0x04, 0x01]
+              statusInfo['isOnline'] = (receivedData[0] & (1 << 3)) == 0;
+              statusInfo['cashDrawerOpen'] = (receivedData[0] & (1 << 2)) != 0;
+              break;
+
+            case 2: // Estado offline [0x10, 0x04, 0x02]
+              statusInfo['isCoverOpen'] = (receivedData[0] & (1 << 2)) != 0;
+              statusInfo['isPaperFeedByButton'] =
+                  (receivedData[0] & (1 << 3)) != 0;
+              break;
+
+            case 4: // Estado del sensor de papel [0x10, 0x04, 0x04]
+              // Evaluamos los bits 2-3 (estado del papel cerca del final)
+              bool bit2 = (receivedData[0] & (1 << 2)) != 0;
+              bool bit3 = (receivedData[0] & (1 << 3)) != 0;
+
+              // Evaluamos los bits 5-6 (estado del sensor de fin de papel)
+              bool bit5 = (receivedData[0] & (1 << 5)) != 0;
+              bool bit6 = (receivedData[0] & (1 << 6)) != 0;
+
+              statusInfo['paperStatus'] = {
+                'paperNearEnd': bit2 ||
+                    bit3, // Si cualquiera de estos bits está activado, el papel está cerca del final
+                'paperEnd': bit5 ||
+                    bit6, // Si cualquiera de estos bits está activado, se ha detectado el fin del papel
+                'paperPresent': !(bit5 ||
+                    bit6), // Si los bits 5-6 están desactivados, hay papel presente
+                'paperAdequate': !(bit2 ||
+                    bit3), // Si los bits 2-3 están desactivados, el papel es adecuado
+              };
+              break;
+
+            default:
+              statusInfo['error'] = 'Tipo de comando no reconocido';
+          }
+        }
+      } else {
+        log("Error: ${_bindings.libusb_error_name(readResult)}");
+        log("Description: ${_getUsbErrorDescription(readResult)}");
+        statusInfo['error'] =
+            'Error al leer respuesta: ${_bindings.libusb_error_name(readResult)}';
       }
-
-      statusInfo['success'] = true;
-      statusInfo['rawData'] = receivedData;
 
       // Liberar la memoria
       malloc.free(dataPointer);
       malloc.free(transferredPointer);
-
-      if (result == 0) {
-        print("Éxito! Bytes leídos: $bytesRead");
-        print("Datos: $receivedData");
-        statusInfo['status'] = interpretStatusByte(0x01, receivedData[0]);
-      } else {
-        print("Error: ${_bindings.libusb_error_name(result)}");
-      }
-
-      printFullStatus(statusInfo);
 
       // Liberar la interfaz
       _bindings.libusb_release_interface(handle, interfaceNumber);
@@ -1096,180 +970,160 @@ class UsbPlugin {
         _bindings.libusb_attach_kernel_driver(handle, interfaceNumber);
       }
     } catch (e) {
-      print('Exception: $e');
+      log('Exception: $e');
+      return {
+        'success': false,
+        'error': 'Error al comunicarse con la impresora: ${e.toString()}',
+        'isConnected': false,
+        'statusType': command.length >= 3 ? command[2] : 0
+      };
     } finally {
       closeDevice(handle);
     }
+    return statusInfo;
   }
 
-  /// Interpreta el byte de estado según su tipo, ajustado para la impresora 3nStart RPT008
-  Map<String, dynamic> interpretStatusByte(int statusType, int statusByte) {
-    Map<String, dynamic> interpretation = {};
+  /// Función sencilla para interpretar el byte de estado de la impresora 3nStart RPT008
+  void interpretPrinterStatus(int statusByte) {
+    // Convertir a representación binaria para facilitar el análisis
+    String bits = statusByte.toRadixString(2).padLeft(8, '0');
 
-    // Convertir el byte a un string de bits para facilitar la interpretación
-    String bits = statusByte.toRadixString(2).padLeft(8, "0");
-    print(
-        'Byte recibido: 0x${statusByte.toRadixString(16).padLeft(2, "0")} ($statusByte) - Bits: $bits');
+    log('\n==== ESTADO DE LA IMPRESORA 3NSTART RPT008 ====');
+    log(
+        'Byte recibido: 0x${statusByte.toRadixString(16).padLeft(2, "0")} ($statusByte)');
+    log('Representación binaria: $bits');
 
-    switch (statusType) {
-      case 0x01: // Estado de la impresora
-        // Para el valor 22 (0x16) = 00010110 en binario
-        // Bit 0 (LSB): No usado típicamente, valor 0
-        // Bit 1: 1 - Puede indicar gaveta abierta en algunas impresoras
-        // Bit 2: 1 - Gaveta abierta (en especificación estándar)
-        // Bit 3: 0 - Online (0 = online, 1 = offline en especificación estándar)
-        // Bit 4: 1 - Podría ser un indicador específico del modelo
-        // Bit 5: 0 - Tapa cerrada (0 = cerrada, 1 = abierta en especificación estándar)
-        // Bit 6: 0 - No hay alimentación de papel manual
-        // Bit 7 (MSB): 0 - No hay error (0 = no error, 1 = error en especificación estándar)
+    // Analizar cada bit individualmente
+    bool error = (statusByte & 0x80) != 0; // Bit 7
+    bool paperFeed = (statusByte & 0x40) != 0; // Bit 6
+    bool coverOpen = (statusByte & 0x20) != 0; // Bit 5
+    bool sensorBit = (statusByte & 0x10) != 0; // Bit 4 (específico del modelo)
+    bool offline = (statusByte & 0x08) != 0; // Bit 3
+    bool drawer1 = (statusByte & 0x04) != 0; // Bit 2
+    bool drawer2 = (statusByte & 0x02) != 0; // Bit 1
+    //bool reserved = (statusByte & 0x01) != 0; // Bit 0
 
-        interpretation['drawer'] =
-            ((statusByte & 0x04) != 0 || (statusByte & 0x02) != 0)
-                ? 'abierto'
-                : 'cerrado';
-        interpretation['online'] = (statusByte & 0x08) == 0 ? true : false;
-        interpretation['coverOpen'] = (statusByte & 0x20) != 0 ? true : false;
-        interpretation['paperFeed'] = (statusByte & 0x40) != 0 ? true : false;
-        interpretation['error'] = (statusByte & 0x80) != 0 ? true : false;
-        interpretation['unknown_bit4'] =
-            (statusByte & 0x10) != 0 ? true : false; // Bit 4 específico
-        break;
+    // Imprimir interpretación
+    log('\nInterpretación:');
+    log('- Estado Online/Offline: ${offline ? "OFFLINE" : "ONLINE"}');
+    log('- Tapa: ${coverOpen ? "ABIERTA" : "CERRADA"}');
+    log('- Error: ${error ? "SÍ" : "NO"}');
+    log('- Gaveta: ${(drawer1 || drawer2) ? "ABIERTA" : "CERRADA"}');
+    log('- Alimentación manual: ${paperFeed ? "ACTIVA" : "INACTIVA"}');
+    log('- Sensor especial (bit 4): ${sensorBit ? "ACTIVO" : "INACTIVO"}');
 
-      case 0x02: // Estado offline
-        interpretation['coverOpen'] = (statusByte & 0x01) != 0 ? true : false;
-        interpretation['paperFeedStop'] =
-            (statusByte & 0x02) != 0 ? true : false;
-        interpretation['errorOccurred'] =
-            (statusByte & 0x04) != 0 ? true : false;
-        interpretation['offline'] = (statusByte & 0x08) != 0 ? true : false;
-        interpretation['autoRecoverableError'] =
-            (statusByte & 0x20) != 0 ? true : false;
-        interpretation['waitingForOnline'] =
-            (statusByte & 0x40) != 0 ? true : false;
-        break;
-
-      case 0x03: // Estado de error
-        interpretation['mechanicalError'] =
-            (statusByte & 0x01) != 0 ? true : false;
-        interpretation['autoRecoverError'] =
-            (statusByte & 0x02) != 0 ? true : false;
-        interpretation['notRecoverableError'] =
-            (statusByte & 0x04) != 0 ? true : false;
-        interpretation['autoRecoverableCutterError'] =
-            (statusByte & 0x08) != 0 ? true : false;
-        interpretation['coverOpen'] = (statusByte & 0x20) != 0 ? true : false;
-        interpretation['paperEmpty'] = (statusByte & 0x40) != 0 ? true : false;
-        break;
-
-      case 0x04: // Estado del papel
-        interpretation['paperNearEnd'] =
-            (statusByte & 0x01) != 0 ? true : false;
-        interpretation['paperEmpty'] = (statusByte & 0x02) != 0 ? true : false;
-        interpretation['paperNearEndStop'] =
-            (statusByte & 0x08) != 0 ? true : false;
-        interpretation['paperEmptyStop'] =
-            (statusByte & 0x10) != 0 ? true : false;
-        break;
-
-      default:
-        interpretation['unknown'] = 'Tipo de estado no reconocido';
+    // Para el caso específico de 0x16 (22)
+    if (statusByte == 22) {
+      log('\nResumen para 0x16 (22):');
+      log('La impresora está ONLINE, con la tapa CERRADA y sin errores.');
+      log('La gaveta parece estar ABIERTA (bits 1 y 2 activados).');
+      log('El bit 4 está activo, que podría indicar un estado específico');
+      log('del sensor de papel u otra función específica del modelo.');
     }
 
-    interpretation['rawByte'] =
-        '0x${statusByte.toRadixString(16).padLeft(2, "0")}';
-    interpretation['binaryBits'] = bits;
+    log('\nDiagrama de bits:');
+    log('+---+---+---+---+---+---+---+---+');
+    log('| 7 | 6 | 5 | 4 | 3 | 2 | 1 | 0 | Posición');
+    log('+---+---+---+---+---+---+---+---+');
+    log(
+        '| ${bits[0]} | ${bits[1]} | ${bits[2]} | ${bits[3]} | ${bits[4]} | ${bits[5]} | ${bits[6]} | ${bits[7]} | Valor');
+    log('+---+---+---+---+---+---+---+---+');
+    log('| E | F | C | S | O | D1| D2| R | Significado');
+    log('+---+---+---+---+---+---+---+---+');
+    log(
+        ' E=Error, F=Feed, C=Cover, S=Sensor, O=Offline, D=Drawer, R=Reserved');
 
-    return interpretation;
+    log('\n========================================');
   }
 
   /// Función de utilidad para mostrar el estado completo
   void printFullStatus(Map<String, dynamic> statusMap) {
     if (!statusMap['success']) {
-      print('Error obteniendo el estado: ${statusMap['error']}');
+      log('Error obteniendo el estado: ${statusMap['error']}');
       return;
     }
 
-    print('\n==== ESTADO DE LA IMPRESORA 3NSTART RPT008 ====');
+    log('\n==== ESTADO DE LA IMPRESORA 3NSTART RPT008 ====');
 
     if (statusMap.containsKey('printerStatus')) {
       final status = statusMap['printerStatus']['status'];
-      print('\n-- ESTADO GENERAL --');
-      print('Gaveta: ${status['drawer']}');
-      print('Online: ${status['online'] ? 'Sí' : 'No'}');
-      print('Tapa abierta: ${status['coverOpen'] ? 'Sí' : 'No'}');
-      print(
+      log('\n-- ESTADO GENERAL --');
+      log('Gaveta: ${status['drawer']}');
+      log('Online: ${status['online'] ? 'Sí' : 'No'}');
+      log('Tapa abierta: ${status['coverOpen'] ? 'Sí' : 'No'}');
+      log(
           'Alimentación de papel manual: ${status['paperFeed'] ? 'Activa' : 'Inactiva'}');
-      print('Error: ${status['error'] ? 'Sí' : 'No'}');
-      print('Byte recibido: ${status['rawByte']}');
+      log('Error: ${status['error'] ? 'Sí' : 'No'}');
+      log('Byte recibido: ${status['rawByte']}');
     }
 
     if (statusMap.containsKey('offlineStatus')) {
       final status = statusMap['offlineStatus']['status'];
-      print('\n-- ESTADO OFFLINE --');
-      print('Tapa abierta: ${status['coverOpen'] ? 'Sí' : 'No'}');
-      print('Botón Feed presionado: ${status['paperFeedStop'] ? 'Sí' : 'No'}');
-      print('Error ocurrido: ${status['errorOccurred'] ? 'Sí' : 'No'}');
-      print('Offline: ${status['offline'] ? 'Sí' : 'No'}');
-      print(
+      log('\n-- ESTADO OFFLINE --');
+      log('Tapa abierta: ${status['coverOpen'] ? 'Sí' : 'No'}');
+      log('Botón Feed presionado: ${status['paperFeedStop'] ? 'Sí' : 'No'}');
+      log('Error ocurrido: ${status['errorOccurred'] ? 'Sí' : 'No'}');
+      log('Offline: ${status['offline'] ? 'Sí' : 'No'}');
+      log(
           'Error auto-recuperable: ${status['autoRecoverableError'] ? 'Sí' : 'No'}');
-      print(
+      log(
           'Esperando volver online: ${status['waitingForOnline'] ? 'Sí' : 'No'}');
-      print('Byte recibido: ${status['rawByte']}');
+      log('Byte recibido: ${status['rawByte']}');
     }
 
     if (statusMap.containsKey('errorStatus')) {
       final status = statusMap['errorStatus']['status'];
-      print('\n-- ESTADO DE ERROR --');
-      print('Error mecánico: ${status['mechanicalError'] ? 'Sí' : 'No'}');
-      print(
+      log('\n-- ESTADO DE ERROR --');
+      log('Error mecánico: ${status['mechanicalError'] ? 'Sí' : 'No'}');
+      log(
           'Error auto-recuperable: ${status['autoRecoverError'] ? 'Sí' : 'No'}');
-      print(
+      log(
           'Error no recuperable: ${status['notRecoverableError'] ? 'Sí' : 'No'}');
-      print(
+      log(
           'Error en cortador: ${status['autoRecoverableCutterError'] ? 'Sí' : 'No'}');
-      print('Tapa abierta: ${status['coverOpen'] ? 'Sí' : 'No'}');
-      print('Sin papel: ${status['paperEmpty'] ? 'Sí' : 'No'}');
-      print('Byte recibido: ${status['rawByte']}');
+      log('Tapa abierta: ${status['coverOpen'] ? 'Sí' : 'No'}');
+      log('Sin papel: ${status['paperEmpty'] ? 'Sí' : 'No'}');
+      log('Byte recibido: ${status['rawByte']}');
     }
 
     if (statusMap.containsKey('paperStatus')) {
       final status = statusMap['paperStatus']['status'];
-      print('\n-- ESTADO DEL PAPEL --');
-      print('Papel por acabarse: ${status['paperNearEnd'] ? 'Sí' : 'No'}');
-      print('Sin papel: ${status['paperEmpty'] ? 'Sí' : 'No'}');
-      print(
+      log('\n-- ESTADO DEL PAPEL --');
+      log('Papel por acabarse: ${status['paperNearEnd'] ? 'Sí' : 'No'}');
+      log('Sin papel: ${status['paperEmpty'] ? 'Sí' : 'No'}');
+      log(
           'Detenido por papel por acabarse: ${status['paperNearEndStop'] ? 'Sí' : 'No'}');
-      print(
+      log(
           'Detenido por falta de papel: ${status['paperEmptyStop'] ? 'Sí' : 'No'}');
-      print('Byte recibido: ${status['rawByte']}');
+      log('Byte recibido: ${status['rawByte']}');
     }
 
-    print('\n========================================');
+    log('\n========================================');
   }
 
   /// Función de depuración para analizar el byte
   void analyzeStatusByte(int statusByte) {
     String bits = statusByte.toRadixString(2).padLeft(8, "0");
-    print(
-        '\n==== ANÁLISIS DE BYTE DE ESTADO: ${statusByte} (0x${statusByte.toRadixString(16).padLeft(2, "0")}) ====');
-    print('Representación binaria: $bits');
-    print(
+    log(
+        '\n==== ANÁLISIS DE BYTE DE ESTADO: $statusByte (0x${statusByte.toRadixString(16).padLeft(2, "0")}) ====');
+    log('Representación binaria: $bits');
+    log(
         'Bit 0 (LSB): ${(statusByte & 0x01) != 0 ? "1" : "0"} - ${describeBit(0, statusByte & 0x01)}');
-    print(
+    log(
         'Bit 1: ${(statusByte & 0x02) != 0 ? "1" : "0"} - ${describeBit(1, statusByte & 0x02)}');
-    print(
+    log(
         'Bit 2: ${(statusByte & 0x04) != 0 ? "1" : "0"} - ${describeBit(2, statusByte & 0x04)}');
-    print(
+    log(
         'Bit 3: ${(statusByte & 0x08) != 0 ? "1" : "0"} - ${describeBit(3, statusByte & 0x08)}');
-    print(
+    log(
         'Bit 4: ${(statusByte & 0x10) != 0 ? "1" : "0"} - ${describeBit(4, statusByte & 0x10)}');
-    print(
+    log(
         'Bit 5: ${(statusByte & 0x20) != 0 ? "1" : "0"} - ${describeBit(5, statusByte & 0x20)}');
-    print(
+    log(
         'Bit 6: ${(statusByte & 0x40) != 0 ? "1" : "0"} - ${describeBit(6, statusByte & 0x40)}');
-    print(
+    log(
         'Bit 7 (MSB): ${(statusByte & 0x80) != 0 ? "1" : "0"} - ${describeBit(7, statusByte & 0x80)}');
-    print('========================================');
+    log('========================================');
   }
 
   /// Función auxiliar para describir la función de cada bit según el estándar ESC/POS común

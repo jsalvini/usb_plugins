@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer';
 
 import 'package:flutter/material.dart';
 import 'package:usb_plugins/usb_plugins.dart';
@@ -147,25 +148,65 @@ class _PrinterTestScreenState extends State<PrinterTestScreen> {
       //final status = await usbPlugin.checkPrinterStatus(vendorId, productId);
       //await usbPlugin.printEscPos(vendorId, productId, [0x1B, 0x40]); // ESC @
       //await Future.delayed(Duration(milliseconds: 500));
-      usbPlugin.initializeAndGetStatus(vendorId, productId);
+      final printerStatus =
+          await usbPlugin.getPrinterStatus(vendorId, productId, [16, 4, 1]);
 
-      //if (result['success'] && result.containsKey('printerStatus')) {
-        // Procesar la respuesta
-        //log("Respuesta: ${result['printerStatus']}");
-      //}
+      if (!printerStatus['success']) {
+        log('Error de conexión: ${printerStatus['error']}');
+        log('La impresora parece estar apagada o desconectada');
+        return; // No seguir intentando si hay un error fundamental de conexión
+      }
 
-      /*setState(() {
-        isOnline = status['isOnline'] ?? false;
-        paperOut = status['paperOut'] ?? true;
-        coverOpen = status['coverOpen'] ?? false;
-        paperNearEnd = status['paperNearEnd'] ?? false;
+      log('Estado de la impresora: $printerStatus');
+      log('¿Impresora en línea? ${printerStatus['isOnline']}');
 
-        // Guardar información de depuración
-        debugText =
-            status['debugInfo'] ?? 'No se recibió información de depuración';
+      // Verificar estado de la tapa solo si la impresora está conectada
+      if (printerStatus['success']) {
+        final coverStatus =
+            await usbPlugin.getPrinterStatus(vendorId, productId, [16, 4, 2]);
+        if (coverStatus['success']) {
+          log('¿Tapa abierta? ${coverStatus['isCoverOpen'] ? 'Sí' : 'No'}');
+          log('Estado de la tapa: $coverStatus');
+        } else {
+          log('No se pudo determinar el estado de la tapa: ${coverStatus['error']}');
+        }
 
-        statusMessage = 'Estado actualizado. Revisa la sección de depuración.';
-      });*/
+        final paperStatus =
+            await usbPlugin.getPrinterStatus(vendorId, productId, [16, 4, 4]);
+
+        if (paperStatus['success'] && paperStatus.containsKey('paperStatus')) {
+          var paper = paperStatus['paperStatus'];
+          if (paper['paperPresent']) {
+            log('Hay papel en la impresora');
+            log(paper['paperNearEnd']
+                ? 'ADVERTENCIA: El papel está por acabarse'
+                : 'La cantidad de papel es adecuada');
+          } else {
+            log('ERROR: No hay papel en la impresora');
+          }
+setState(() {
+          paperOut = paper['paperPresent'];
+          paperNearEnd = paper['paperNearEnd'];
+          });
+        } else {
+          log('No se pudo determinar el estado del papel: ${paperStatus['error'] ?? 'Error desconocido'}');
+        }
+
+        setState(() {
+          isOnline = printerStatus['isOnline'];
+          coverOpen = coverStatus['isCoverOpen'];
+          // Guardar información de depuración
+          debugText = printerStatus['error'] ??
+              'No se recibió información de depuración';
+
+          statusMessage =
+              'Estado actualizado. Revisa la sección de depuración.';
+        });
+
+        print("Respuesta 1: $printerStatus");
+        print("Respuesta 2: $coverStatus");
+        print("Respuesta 3: $paperStatus");
+      }
     } catch (e) {
       setState(() {
         statusMessage = 'Error al verificar estado: $e';
