@@ -953,6 +953,12 @@ class UsbPlugin {
     // Aquí convertimos de Pointer? a Pointer, ahora que sabemos que no es nulo
     final handle = handleNullable;
 
+  Map<String, dynamic> statusInfo = {
+    'success': false,
+    'rawData': null,
+    'status': {}
+  };
+
     try {
       // Verificar si hay un kernel driver activo y desconectarlo si es necesario
       int hasKernelDriver = 0;
@@ -1026,13 +1032,16 @@ class UsbPlugin {
       calloc.free(buffer);
       calloc.free(transferredPtr);
 
-      if (transferResult < 0) {}
+      if (transferResult < 0) {
+        statusInfo['error'] = 'Error al leer respuesta: $transferResult';
+      }
 
       log("Transferencia exitosa: $bytesSent bytes enviados");
 
       Uint8List buffer2 = Uint8List(512);
       // Usar UnsignedChar en lugar de Uint8
-      final Pointer<UnsignedChar> dataPointer = malloc.allocate<UnsignedChar>(buffer2.length);
+      final Pointer<UnsignedChar> dataPointer =
+          malloc.allocate<UnsignedChar>(buffer2.length);
       // Copiar los datos del Uint8List al puntero
       for (var i = 0; i < buffer2.length; i++) {
         dataPointer[i] = buffer[i];
@@ -1045,12 +1054,12 @@ class UsbPlugin {
 
       // Llamar a la función correctamente
       int result = _bindings.libusb_bulk_transfer(
-        handle,                // libusb_device_handle*
-        0x81,                  // unsigned char endpoint
-        dataPointer,           // unsigned char* data
-        buffer2.length,         // int length
-        transferredPointer,    // int* transferred
-        timeout,               // unsigned int timeout
+        handle, // libusb_device_handle*
+        0x81, // unsigned char endpoint
+        dataPointer, // unsigned char* data
+        buffer2.length, // int length
+        transferredPointer, // int* transferred
+        timeout, // unsigned int timeout
       );
 
       // Leer cuántos bytes se transfirieron
@@ -1062,18 +1071,22 @@ class UsbPlugin {
         receivedData[i] = dataPointer[i];
       }
 
+            statusInfo['success'] = true;
+      statusInfo['rawData'] = receivedData;
 
       // Liberar la memoria
       malloc.free(dataPointer);
       malloc.free(transferredPointer);
 
-
       if (result == 0) {
         print("Éxito! Bytes leídos: $bytesRead");
         print("Datos: $receivedData");
+        statusInfo['status'] = interpretStatusByte(0x01, receivedData[0]);
       } else {
         print("Error: ${_bindings.libusb_error_name(result)}");
       }
+
+      printFullStatus(statusInfo);
 
       // Liberar la interfaz
       _bindings.libusb_release_interface(handle, interfaceNumber);
@@ -1800,5 +1813,130 @@ class UsbPlugin {
     }
 
     return response;
+  }
+
+  /// Interpreta el byte de estado según su tipo
+  Map<String, dynamic> interpretStatusByte(int statusType, int statusByte) {
+    Map<String, dynamic> interpretation = {};
+
+    switch (statusType) {
+      case 0x01: // Estado de la impresora
+        interpretation['drawer'] =
+            (statusByte & 0x04) != 0 ? 'abierto' : 'cerrado';
+        interpretation['online'] = (statusByte & 0x08) == 0 ? true : false;
+        interpretation['coverOpen'] = (statusByte & 0x20) != 0 ? true : false;
+        interpretation['paperFeed'] = (statusByte & 0x40) != 0 ? true : false;
+        interpretation['error'] = (statusByte & 0x80) != 0 ? true : false;
+        break;
+
+      case 0x02: // Estado offline
+        interpretation['coverOpen'] = (statusByte & 0x01) != 0 ? true : false;
+        interpretation['paperFeedStop'] =
+            (statusByte & 0x02) != 0 ? true : false;
+        interpretation['errorOccurred'] =
+            (statusByte & 0x04) != 0 ? true : false;
+        interpretation['offline'] = (statusByte & 0x08) != 0 ? true : false;
+        interpretation['autoRecoverableError'] =
+            (statusByte & 0x20) != 0 ? true : false;
+        interpretation['waitingForOnline'] =
+            (statusByte & 0x40) != 0 ? true : false;
+        break;
+
+      case 0x03: // Estado de error
+        interpretation['mechanicalError'] =
+            (statusByte & 0x01) != 0 ? true : false;
+        interpretation['autoRecoverError'] =
+            (statusByte & 0x02) != 0 ? true : false;
+        interpretation['notRecoverableError'] =
+            (statusByte & 0x04) != 0 ? true : false;
+        interpretation['autoRecoverableCutterError'] =
+            (statusByte & 0x08) != 0 ? true : false;
+        interpretation['coverOpen'] = (statusByte & 0x20) != 0 ? true : false;
+        interpretation['paperEmpty'] = (statusByte & 0x40) != 0 ? true : false;
+        break;
+
+      case 0x04: // Estado del papel
+        interpretation['paperNearEnd'] =
+            (statusByte & 0x01) != 0 ? true : false;
+        interpretation['paperEmpty'] = (statusByte & 0x02) != 0 ? true : false;
+        interpretation['paperNearEndStop'] =
+            (statusByte & 0x08) != 0 ? true : false;
+        interpretation['paperEmptyStop'] =
+            (statusByte & 0x10) != 0 ? true : false;
+        break;
+
+      default:
+        interpretation['unknown'] = 'Tipo de estado no reconocido';
+    }
+
+    interpretation['rawByte'] =
+        '0x${statusByte.toRadixString(16).padLeft(2, "0")}';
+
+    return interpretation;
+  }
+
+  /// Función de utilidad para mostrar el estado completo
+  void printFullStatus(Map<String, dynamic> statusMap) {
+    if (!statusMap['success']) {
+      print('Error obteniendo el estado: ${statusMap['error']}');
+      return;
+    }
+
+    print('\n==== ESTADO DE LA IMPRESORA 3NSTART RPT008 ====');
+
+    if (statusMap.containsKey('printerStatus')) {
+      final status = statusMap['printerStatus']['status'];
+      print('\n-- ESTADO GENERAL --');
+      print('Gaveta: ${status['drawer']}');
+      print('Online: ${status['online'] ? 'Sí' : 'No'}');
+      print('Tapa abierta: ${status['coverOpen'] ? 'Sí' : 'No'}');
+      print(
+          'Alimentación de papel manual: ${status['paperFeed'] ? 'Activa' : 'Inactiva'}');
+      print('Error: ${status['error'] ? 'Sí' : 'No'}');
+      print('Byte recibido: ${status['rawByte']}');
+    }
+
+    if (statusMap.containsKey('offlineStatus')) {
+      final status = statusMap['offlineStatus']['status'];
+      print('\n-- ESTADO OFFLINE --');
+      print('Tapa abierta: ${status['coverOpen'] ? 'Sí' : 'No'}');
+      print('Botón Feed presionado: ${status['paperFeedStop'] ? 'Sí' : 'No'}');
+      print('Error ocurrido: ${status['errorOccurred'] ? 'Sí' : 'No'}');
+      print('Offline: ${status['offline'] ? 'Sí' : 'No'}');
+      print(
+          'Error auto-recuperable: ${status['autoRecoverableError'] ? 'Sí' : 'No'}');
+      print(
+          'Esperando volver online: ${status['waitingForOnline'] ? 'Sí' : 'No'}');
+      print('Byte recibido: ${status['rawByte']}');
+    }
+
+    if (statusMap.containsKey('errorStatus')) {
+      final status = statusMap['errorStatus']['status'];
+      print('\n-- ESTADO DE ERROR --');
+      print('Error mecánico: ${status['mechanicalError'] ? 'Sí' : 'No'}');
+      print(
+          'Error auto-recuperable: ${status['autoRecoverError'] ? 'Sí' : 'No'}');
+      print(
+          'Error no recuperable: ${status['notRecoverableError'] ? 'Sí' : 'No'}');
+      print(
+          'Error en cortador: ${status['autoRecoverableCutterError'] ? 'Sí' : 'No'}');
+      print('Tapa abierta: ${status['coverOpen'] ? 'Sí' : 'No'}');
+      print('Sin papel: ${status['paperEmpty'] ? 'Sí' : 'No'}');
+      print('Byte recibido: ${status['rawByte']}');
+    }
+
+    if (statusMap.containsKey('paperStatus')) {
+      final status = statusMap['paperStatus']['status'];
+      print('\n-- ESTADO DEL PAPEL --');
+      print('Papel por acabarse: ${status['paperNearEnd'] ? 'Sí' : 'No'}');
+      print('Sin papel: ${status['paperEmpty'] ? 'Sí' : 'No'}');
+      print(
+          'Detenido por papel por acabarse: ${status['paperNearEndStop'] ? 'Sí' : 'No'}');
+      print(
+          'Detenido por falta de papel: ${status['paperEmptyStop'] ? 'Sí' : 'No'}');
+      print('Byte recibido: ${status['rawByte']}');
+    }
+
+    print('\n========================================');
   }
 }
