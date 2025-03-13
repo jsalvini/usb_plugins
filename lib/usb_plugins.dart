@@ -953,11 +953,11 @@ class UsbPlugin {
     // Aquí convertimos de Pointer? a Pointer, ahora que sabemos que no es nulo
     final handle = handleNullable;
 
-  Map<String, dynamic> statusInfo = {
-    'success': false,
-    'rawData': null,
-    'status': {}
-  };
+    Map<String, dynamic> statusInfo = {
+      'success': false,
+      'rawData': null,
+      'status': {}
+    };
 
     try {
       // Verificar si hay un kernel driver activo y desconectarlo si es necesario
@@ -1071,7 +1071,7 @@ class UsbPlugin {
         receivedData[i] = dataPointer[i];
       }
 
-            statusInfo['success'] = true;
+      statusInfo['success'] = true;
       statusInfo['rawData'] = receivedData;
 
       // Liberar la memoria
@@ -1102,731 +1102,37 @@ class UsbPlugin {
     }
   }
 
-  Future<Map<String, dynamic>> sendCommandToPrinter(
-    int vendorId,
-    int productId,
-    Uint8List data, {
-    int interfaceNumber = 0,
-    int endpointAddress = 0x01,
-    int readEndpointAddress = 0x81,
-    int timeout = 10000,
-    bool expectResponse = false,
-    int maxResponseLength = 256,
-  }) async {
-    // Abre el dispositivo
-    final Pointer<libusb_device_handle>? handleNullable =
-        openDevice(vendorId, productId);
-    if (handleNullable == nullptr || handleNullable == null) {
-      return {'success': false, 'error': 'No se pudo abrir el dispositivo'};
-    }
-
-    // Aquí convertimos de Pointer? a Pointer, ahora que sabemos que no es nulo
-    final handle = handleNullable;
-
-    try {
-      // Verificar si hay un kernel driver activo y desconectarlo si es necesario
-      int hasKernelDriver = 0;
-      if (Platform.isLinux || Platform.isMacOS) {
-        try {
-          hasKernelDriver =
-              _bindings.libusb_kernel_driver_active(handle, interfaceNumber);
-          if (hasKernelDriver == 1) {
-            log("Desconectando el driver del kernel...");
-            final detachResult =
-                _bindings.libusb_detach_kernel_driver(handle, interfaceNumber);
-            if (detachResult < 0) {
-              log("No se pudo desconectar el driver del kernel: $detachResult");
-            } else {
-              log("Driver del kernel desconectado con éxito");
-            }
-          }
-        } catch (e) {
-          log("Error al verificar/desconectar el driver del kernel: $e");
-        }
-      }
-
-      // Configurar el dispositivo
-      final configResult = _bindings.libusb_set_configuration(handle, 1);
-      if (configResult < 0) {
-        log("Advertencia: No se pudo establecer la configuración: $configResult");
-        // Continuamos a pesar del error
-      }
-
-      // Reclamar la interfaz con múltiples intentos
-      int claimResult = -1;
-      int attempts = 0;
-      const maxAttempts = 3;
-
-      while (attempts < maxAttempts) {
-        claimResult = _bindings.libusb_claim_interface(handle, interfaceNumber);
-        if (claimResult == 0) break;
-
-        log("Intento ${attempts + 1} fallido con error $claimResult. Reintentando...");
-        await Future.delayed(Duration(milliseconds: 500));
-        attempts++;
-      }
-
-      if (claimResult < 0) {
-        return {
-          'success': false,
-          'error':
-              'No se pudo reclamar la interfaz después de $maxAttempts intentos',
-          'errorCode': claimResult,
-          'errorDescription': _getUsbErrorDescription(claimResult)
-        };
-      }
-
-      // NUEVO: Configurar modo de transferencia alternativo si es necesario
-      // Algunas impresoras requieren esto para comunicación bidireccional
-      final altSettingResult = _bindings.libusb_set_interface_alt_setting(
-          handle, interfaceNumber, 0);
-
-      if (altSettingResult < 0) {
-        log("No se pudo establecer configuración alternativa: $altSettingResult");
-        // Continuamos de todos modos
-      }
-
-      // Enviar datos a la impresora
-      final buffer = calloc<Uint8>(data.length);
-      final bufferList = buffer.asTypedList(data.length);
-      bufferList.setAll(0, data);
-
-      final transferredPtr = calloc<Int>();
-
-      log("Enviando ${data.length} bytes al endpoint $endpointAddress...");
-
-      final bytesSent = _bindings.libusb_bulk_transfer(
-        handle,
-        endpointAddress,
-        buffer.cast<UnsignedChar>(),
-        data.length,
-        transferredPtr,
-        timeout,
-      );
-
-      final bytesSentCount = transferredPtr.value;
-      log("Transferencia exitosa: $bytesSentCount bytes enviados");
-
-      calloc.free(buffer);
-      calloc.free(transferredPtr);
-
-      if (bytesSent < 0) {
-        return {
-          'success': false,
-          'error':
-              'Error al enviar los datos: ${_getUsbErrorDescription(bytesSent)}'
-        };
-      }
-
-      // NUEVO: Verificar si la impresora está lista para responder
-      // Este paso es crucial para algunas impresoras térmicas
-      if (expectResponse) {
-        // Esperar un tiempo para que la impresora procese el comando
-        // Incrementado significativamente para dar tiempo a la impresora
-        await Future.delayed(Duration(milliseconds: 1000));
-
-        // NUEVO: Enviar un comando "ENQ" para despertar el buffer de respuesta
-        // Algunas impresoras necesitan esto antes de enviar datos de estado
-        final enqCommand = Uint8List.fromList([0x05]); // ENQ command
-        final enqBuffer = calloc<Uint8>(1);
-        enqBuffer.value = 0x05;
-        final enqTransferredPtr = calloc<Int>();
-
-        final enqResult = _bindings.libusb_bulk_transfer(
-          handle,
-          endpointAddress,
-          enqBuffer.cast<UnsignedChar>(),
-          1,
-          enqTransferredPtr,
-          timeout,
-        );
-
-        calloc.free(enqBuffer);
-        calloc.free(enqTransferredPtr);
-
-        // Esperar después del ENQ
-        await Future.delayed(Duration(milliseconds: 500));
-      }
-
-      // Si se espera una respuesta, leer los datos de la impresora
-      Map<String, dynamic> result = {
-        'success': true,
-        'bytesSent': data.length,
-      };
-
-      if (expectResponse) {
-        final responseBuffer = calloc<Uint8>(maxResponseLength);
-        final responseTransferredPtr = calloc<Int>();
-
-        int maxAttempts = 5;
-        int delayBetweenAttempts = 1000; // Incrementado a 1000ms
-        int bytesReceived = 0;
-        int responseResult = -7; // LIBUSB_ERROR_TIMEOUT
-
-        print("Leyendo respuesta desde el endpoint $readEndpointAddress...");
-
-        for (int i = 0; i < maxAttempts; i++) {
-          // NUEVO: Reset del endpoint antes de cada intento de lectura
-          // Esto puede ayudar con impresoras que se quedan en estados inconsistentes
-          if (i > 0) {
-            _bindings.libusb_clear_halt(handle, readEndpointAddress);
-            await Future.delayed(Duration(milliseconds: 200));
-          }
-
-          responseResult = _bindings.libusb_bulk_transfer(
-              handle,
-              readEndpointAddress,
-              responseBuffer.cast<UnsignedChar>(),
-              maxResponseLength,
-              responseTransferredPtr,
-              timeout);
-
-          bytesReceived = responseTransferredPtr.value;
-
-          if (responseResult == 0 && bytesReceived > 0) {
-            print(
-                "✅ Respuesta recibida en intento ${i + 1}: $bytesReceived bytes");
-            // NUEVO: Imprimir los bytes recibidos para depuración
-            final responseList =
-                responseBuffer.asTypedList(bytesReceived).toList();
-            print(
-                "Bytes recibidos: ${responseList.map((b) => '0x${b.toRadixString(16).padLeft(2, '0')}').join(', ')}");
-            break;
-          } else {
-            print(
-                "⚠️ Intento ${i + 1}: No se recibió respuesta (Error: $responseResult, ${_getUsbErrorDescription(responseResult)})");
-            await Future.delayed(Duration(milliseconds: delayBetweenAttempts));
-          }
-        }
-
-        if (bytesReceived > 0) {
-          final responseList =
-              responseBuffer.asTypedList(bytesReceived).toList();
-          result['responseData'] = responseList;
-          result['bytesReceived'] = bytesReceived;
-          // NUEVO: Interpretar el estado si se recibió la respuesta esperada
-          if (data.length >= 3 &&
-              data[0] == 0x10 &&
-              data[1] == 0x04 &&
-              data[2] == 0x01) {
-            if (responseList.isNotEmpty) {
-              result['printerStatus'] =
-                  _interpretPrinterStatus(responseList[0]);
-            }
-          }
-        } else {
-          print("🚨 No se recibió respuesta después de $maxAttempts intentos.");
-          result['responseData'] = [];
-          result['bytesReceived'] = 0;
-          result['responseError'] = _getUsbErrorDescription(responseResult);
-        }
-
-        calloc.free(responseBuffer);
-        calloc.free(responseTransferredPtr);
-      }
-
-      // Liberar la interfaz
-      _bindings.libusb_release_interface(handle, interfaceNumber);
-
-      // Reconectar el driver del kernel si lo desconectamos
-      if (hasKernelDriver == 1 && (Platform.isLinux || Platform.isMacOS)) {
-        _bindings.libusb_attach_kernel_driver(handle, interfaceNumber);
-      }
-
-      return result;
-    } catch (e) {
-      return {
-        'success': false,
-        'error': 'Error al comunicarse con la impresora',
-        'exception': e.toString()
-      };
-    } finally {
-      closeDevice(handle);
-    }
-  }
-
-// NUEVA FUNCIÓN: Interpretar el byte de estado de la impresora
-  Map<String, bool> _interpretPrinterStatus(int statusByte) {
-    return {
-      'online': (statusByte & 0x08) == 0,
-      'paperNearEnd': (statusByte & 0x01) != 0,
-      'paperEmpty': (statusByte & 0x20) != 0,
-      'drawerOpen': (statusByte & 0x04) != 0,
-      'coverOpen': (statusByte & 0x02) != 0,
-      'errorOccurred': (statusByte & 0x40) != 0,
-    };
-  }
-
-// NUEVA FUNCIÓN: Probar distintos comandos de estado de la impresora
-  Future<Map<String, dynamic>> testPrinterStatusCommands(
-      int vendorId, int productId) async {
-    Map<String, dynamic> results = {};
-
-    // Lista de comandos a probar
-    final commandsToTest = [
-      {
-        'name': 'Real-time status (1)',
-        'command': [0x10, 0x04, 0x01]
-      },
-      {
-        'name': 'Real-time status (2)',
-        'command': [0x10, 0x04, 0x02]
-      },
-      {
-        'name': 'Real-time status (3)',
-        'command': [0x10, 0x04, 0x03]
-      },
-      {
-        'name': 'Real-time status (4)',
-        'command': [0x10, 0x04, 0x04]
-      },
-      {
-        'name': 'Status request',
-        'command': [0x1D, 0x72, 0x01]
-      },
-      {
-        'name': 'ENQ Status',
-        'command': [0x05]
-      },
-      {
-        'name': 'ESC v',
-        'command': [0x1B, 0x76]
-      },
-    ];
-
-    for (final cmd in commandsToTest) {
-      print("Probando comando ${cmd['name']}: ${cmd['command']}");
-      final data = Uint8List.fromList(cmd['command'] as List<int>);
-
-      final result = await sendCommandToPrinter(
-        vendorId,
-        productId,
-        data,
-        expectResponse: true,
-        timeout: 15000,
-        maxResponseLength: 32,
-      );
-
-      results[cmd['name'] as String] = result;
-
-      // Esperar entre comandos para evitar sobrecargar la impresora
-      await Future.delayed(Duration(milliseconds: 2000));
-    }
-
-    return results;
-  }
-
-  Future<Map<String, dynamic>> sendDataToPrinterV2(
-    int vendorId,
-    int productId,
-    Uint8List data, {
-    int interfaceNumber = 0,
-    int endpointAddress = 0x01,
-    int readEndpointAddress = 0x81,
-    int timeout = 10000,
-    bool expectResponse = false,
-    int maxResponseLength = 256,
-  }) async {
-    // Abre el dispositivo
-    final Pointer<libusb_device_handle>? handleNullable =
-        openDevice(vendorId, productId);
-    if (handleNullable == nullptr || handleNullable == null) {
-      return {'success': false, 'error': 'No se pudo abrir el dispositivo'};
-    }
-
-    // Aquí convertimos de Pointer? a Pointer, ahora que sabemos que no es nulo
-    final handle = handleNullable;
-
-    try {
-      // Verificar si hay un kernel driver activo y desconectarlo si es necesario
-      int hasKernelDriver = 0;
-      if (Platform.isLinux || Platform.isMacOS) {
-        try {
-          hasKernelDriver =
-              _bindings.libusb_kernel_driver_active(handle, interfaceNumber);
-          if (hasKernelDriver == 1) {
-            log("Desconectando el driver del kernel...");
-            final detachResult =
-                _bindings.libusb_detach_kernel_driver(handle, interfaceNumber);
-            if (detachResult < 0) {
-              log("No se pudo desconectar el driver del kernel: $detachResult");
-            } else {
-              log("Driver del kernel desconectado con éxito");
-            }
-          }
-        } catch (e) {
-          log("Error al verificar/desconectar el driver del kernel: $e");
-        }
-      }
-
-      // Configurar el dispositivo si es necesario
-      final configResult = _bindings.libusb_set_configuration(handle, 1);
-      if (configResult < 0) {
-        log("Advertencia: No se pudo establecer la configuración: $configResult");
-        // Continuamos a pesar del error, ya que algunas impresoras funcionan sin esto
-      }
-
-      // Reclamar la interfaz con múltiples intentos
-      int claimResult = -1;
-      int attempts = 0;
-      const maxAttempts = 3;
-
-      while (attempts < maxAttempts) {
-        claimResult = _bindings.libusb_claim_interface(handle, interfaceNumber);
-        if (claimResult == 0) break;
-
-        log("Intento ${attempts + 1} fallido con error $claimResult. Reintentando...");
-        // Esperar un poco antes de reintentar
-        await Future.delayed(Duration(milliseconds: 500));
-
-        attempts++;
-      }
-
-      if (claimResult < 0) {
-        return {
-          'success': false,
-          'error':
-              'No se pudo reclamar la interfaz después de $maxAttempts intentos',
-          'errorCode': claimResult,
-          'errorDescription': _getUsbErrorDescription(claimResult)
-        };
-      }
-
-      // Enviar datos a la impresora
-      final buffer = calloc<Uint8>(data.length);
-      final bufferList = buffer.asTypedList(data.length);
-      bufferList.setAll(0, data);
-
-      final transferredPtr = calloc<Int>();
-
-      try {
-        log("Enviando ${data.length} bytes al endpoint $endpointAddress...");
-        int transferResult = _bindings.libusb_bulk_transfer(
-            handle,
-            endpointAddress,
-            buffer.cast<UnsignedChar>(),
-            data.length,
-            transferredPtr,
-            timeout);
-
-        await Future.delayed(Duration(milliseconds: 5000));
-
-        //calloc.free(buffer);
-        //calloc.free(transferredPtr);
-
-        if (transferResult < 0) {
-          return {
-            'success': false,
-            'error': 'Error en la transferencia de datos',
-            'errorCode': transferResult,
-            'errorDescription': _getUsbErrorDescription(transferResult)
-          };
-        }
-
-        if (transferResult == 0) {
-          print("Comando enviado correctamente.");
-
-          // Buffer para leer la respuesta
-          const int bufferSize = 512;
-          final buffer = calloc<Uint8>(bufferSize);
-
-          // Leer la respuesta de la impresora
-          int result = _bindings.libusb_bulk_transfer(
-            handle,
-            endpointAddress,
-            buffer.cast<UnsignedChar>(),
-            bufferSize,
-            transferredPtr,
-            1000,
-          );
-
-          if (result == 0) {
-            print("Respuesta recibida (${transferredPtr.value} bytes):");
-            final List<int> receivedData =
-                buffer.asTypedList(transferredPtr.value);
-            print(receivedData.map((e) => e.toRadixString(16)).join(' '));
-
-            // Interpretar respuesta
-            int statusByte = receivedData[0];
-            if ((statusByte & 0x08) != 0) {
-              print("⚠️ La impresora está fuera de línea.");
-            }
-            if ((statusByte & 0x20) != 0) {
-              print("🖨️ Papel a punto de agotarse.");
-            }
-            if ((statusByte & 0x40) != 0) {
-              print("🚨 No hay papel en la impresora.");
-            }
-          } else {
-            print("Error al leer respuesta: Código $result");
-          }
-
-          calloc.free(buffer);
-        } else {
-          print("Error al enviar comando: Código $transferResult");
-        }
-      } finally {
-        final bytesSent = transferredPtr.value;
-
-        log("Transferencia exitosa: $bytesSent bytes enviados");
-
-        calloc.free(buffer);
-        calloc.free(transferredPtr);
-      }
-
-      final bytesSent = transferredPtr.value;
-
-      // Si se espera una respuesta, leer los datos de la impresora
-      Map<String, dynamic> result = {
-        'success': true,
-        'bytesSent': bytesSent,
-      };
-
-      if (expectResponse) {
-        // Crear buffer para la respuesta
-        final responseBuffer = calloc<Uint8>(maxResponseLength);
-        final responseTransferredPtr = calloc<Int>();
-
-        // Pequeña espera para dar tiempo a la impresora a procesar y preparar la respuesta
-        await Future.delayed(Duration(milliseconds: 800));
-
-        log("Leyendo respuesta desde el endpoint $readEndpointAddress...");
-        final responseResult = _bindings.libusb_bulk_transfer(
-            handle,
-            readEndpointAddress,
-            responseBuffer.cast<UnsignedChar>(),
-            maxResponseLength,
-            responseTransferredPtr,
-            timeout);
-
-        await Future.delayed(Duration(milliseconds: 100));
-
-        if (responseResult >= 0) {
-          final bytesReceived = responseTransferredPtr.value;
-          log("Respuesta recibida: $bytesReceived bytes");
-
-          if (bytesReceived > 0) {
-            // Convertir la respuesta a List<int>
-            final responseList = List<int>.filled(bytesReceived, 0);
-            for (var i = 0; i < bytesReceived; i++) {
-              responseList[i] = responseBuffer[i];
-            }
-
-            // Añadir la respuesta al resultado
-            result['responseData'] = responseList;
-            result['bytesReceived'] = bytesReceived;
-          } else {
-            result['responseData'] = [];
-            result['bytesReceived'] = 0;
-          }
-        } else {
-          log("Error al leer la respuesta: $responseResult");
-          result['responseError'] = _getUsbErrorDescription(responseResult);
-        }
-
-        calloc.free(responseBuffer);
-        calloc.free(responseTransferredPtr);
-      }
-
-      // Liberar la interfaz
-      _bindings.libusb_release_interface(handle, interfaceNumber);
-
-      // Reconectar el driver del kernel si lo desconectamos
-      if (hasKernelDriver == 1 && (Platform.isLinux || Platform.isMacOS)) {
-        _bindings.libusb_attach_kernel_driver(handle, interfaceNumber);
-      }
-
-      return result;
-    } catch (e) {
-      return {
-        'success': false,
-        'error': 'Error al comunicarse con la impresora',
-        'exception': e.toString()
-      };
-    } finally {
-      closeDevice(handle);
-    }
-  }
-
-  Future<Map<String, dynamic>> sendCommand(
-    int vendorId,
-    int productId, {
-    int interfaceNumber = 0,
-    int endpointAddress = 0x01,
-    int readEndpointAddress = 0x81,
-    int timeout = 10000,
-    bool expectResponse = false,
-    int maxResponseLength = 256,
-  }) async {
-    List<int> command = [0x10, 0x04, 0x01];
-
-    final Pointer<UnsignedChar> data = malloc<UnsignedChar>(command.length);
-    for (int i = 0; i < command.length; i++) {
-      data[i] = command[i];
-    }
-
-    // Abre el dispositivo
-    final Pointer<libusb_device_handle>? handleNullable =
-        openDevice(vendorId, productId);
-    if (handleNullable == nullptr || handleNullable == null) {
-      return {'success': false, 'error': 'No se pudo abrir el dispositivo'};
-    }
-
-    // Aquí convertimos de Pointer? a Pointer, ahora que sabemos que no es nulo
-    final handle = handleNullable;
-
-    try {
-      // Verificar si hay un kernel driver activo y desconectarlo si es necesario
-      int hasKernelDriver = 0;
-      if (Platform.isLinux || Platform.isMacOS) {
-        try {
-          hasKernelDriver =
-              _bindings.libusb_kernel_driver_active(handle, interfaceNumber);
-          if (hasKernelDriver == 1) {
-            log("Desconectando el driver del kernel...");
-            final detachResult =
-                _bindings.libusb_detach_kernel_driver(handle, interfaceNumber);
-            if (detachResult < 0) {
-              log("No se pudo desconectar el driver del kernel: $detachResult");
-            } else {
-              log("Driver del kernel desconectado con éxito");
-            }
-          }
-        } catch (e) {
-          log("Error al verificar/desconectar el driver del kernel: $e");
-        }
-      }
-
-      // Configurar el dispositivo si es necesario
-      final configResult = _bindings.libusb_set_configuration(handle, 1);
-      if (configResult < 0) {
-        log("Advertencia: No se pudo establecer la configuración: $configResult");
-        // Continuamos a pesar del error, ya que algunas impresoras funcionan sin esto
-      }
-
-      // Reclamar la interfaz con múltiples intentos
-      int claimResult = -1;
-      int attempts = 0;
-      const maxAttempts = 3;
-
-      while (attempts < maxAttempts) {
-        claimResult = _bindings.libusb_claim_interface(handle, interfaceNumber);
-        if (claimResult == 0) break;
-
-        log("Intento ${attempts + 1} fallido con error $claimResult. Reintentando...");
-        // Esperar un poco antes de reintentar
-        await Future.delayed(Duration(milliseconds: 500));
-
-        attempts++;
-      }
-
-      if (claimResult < 0) {
-        return {
-          'success': false,
-          'error':
-              'No se pudo reclamar la interfaz después de $maxAttempts intentos',
-          'errorCode': claimResult,
-          'errorDescription': _getUsbErrorDescription(claimResult)
-        };
-      }
-
-      final Pointer<Int> transferred = malloc<Int>();
-
-      int result = _bindings.libusb_bulk_transfer(
-        handle,
-        0x01, // Endpoint de salida (ajustar según el dispositivo)
-        data,
-        command.length,
-        transferred,
-        1000, // Timeout
-      );
-
-      malloc.free(data);
-      malloc.free(transferred);
-
-      print('result: $result');
-      if (result != 0) {
-        String error = _getUsbErrorDescription(result);
-        print('readResponse error: $error');
-        throw Exception("Error al enviar datos a la impresora");
-      } else {
-        return readResponse(handle, hasKernelDriver, interfaceNumber);
-      }
-    } catch (e) {
-      return {
-        'success': false,
-        'error': 'Error al comunicarse con la impresora',
-        'exception': e.toString()
-      };
-    } finally {
-      closeDevice(handle);
-    }
-  }
-
-  Future<Map<String, dynamic>> readResponse(
-    Pointer<libusb_device_handle> handle,
-    int hasKernelDriver,
-    int interfaceNumber,
-  ) async {
-    final Pointer<UnsignedChar> buffer = malloc<UnsignedChar>(8);
-    final Pointer<Int> transferred = malloc<Int>();
-
-    int bytesRead = 0;
-    Pointer<Uint8> responseBuffer = calloc<Uint8>(64);
-
-    int result = _bindings.libusb_bulk_transfer(
-      handle,
-      0x81,
-      buffer,
-      64,
-      transferred,
-      10000,
-    );
-    print('readResponse result: $result');
-    if (result == 0 && bytesRead > 0) {
-      print("Respuesta recibida: ${responseBuffer.asTypedList(bytesRead)}");
-    } else {
-      String error = _getUsbErrorDescription(result);
-      print('readResponse error: $error');
-      await Future.delayed(
-          Duration(milliseconds: 500)); // Espera antes del próximo intento
-    }
-
-    List<int> status = List.generate(transferred.value, (i) => buffer[i]);
-
-    print('status: $status');
-
-    Map<String, dynamic> response = {
-      'success': true,
-      'bytesSent': status,
-    };
-
-    malloc.free(buffer);
-    malloc.free(transferred);
-
-    // Liberar la interfaz
-    _bindings.libusb_release_interface(handle, interfaceNumber);
-
-    // Reconectar el driver del kernel si lo desconectamos
-    if (hasKernelDriver == 1 && (Platform.isLinux || Platform.isMacOS)) {
-      _bindings.libusb_attach_kernel_driver(handle, interfaceNumber);
-    }
-
-    return response;
-  }
-
-  /// Interpreta el byte de estado según su tipo
+  /// Interpreta el byte de estado según su tipo, ajustado para la impresora 3nStart RPT008
   Map<String, dynamic> interpretStatusByte(int statusType, int statusByte) {
     Map<String, dynamic> interpretation = {};
 
+    // Convertir el byte a un string de bits para facilitar la interpretación
+    String bits = statusByte.toRadixString(2).padLeft(8, "0");
+    print(
+        'Byte recibido: 0x${statusByte.toRadixString(16).padLeft(2, "0")} ($statusByte) - Bits: $bits');
+
     switch (statusType) {
       case 0x01: // Estado de la impresora
+        // Para el valor 22 (0x16) = 00010110 en binario
+        // Bit 0 (LSB): No usado típicamente, valor 0
+        // Bit 1: 1 - Puede indicar gaveta abierta en algunas impresoras
+        // Bit 2: 1 - Gaveta abierta (en especificación estándar)
+        // Bit 3: 0 - Online (0 = online, 1 = offline en especificación estándar)
+        // Bit 4: 1 - Podría ser un indicador específico del modelo
+        // Bit 5: 0 - Tapa cerrada (0 = cerrada, 1 = abierta en especificación estándar)
+        // Bit 6: 0 - No hay alimentación de papel manual
+        // Bit 7 (MSB): 0 - No hay error (0 = no error, 1 = error en especificación estándar)
+
         interpretation['drawer'] =
-            (statusByte & 0x04) != 0 ? 'abierto' : 'cerrado';
+            ((statusByte & 0x04) != 0 || (statusByte & 0x02) != 0)
+                ? 'abierto'
+                : 'cerrado';
         interpretation['online'] = (statusByte & 0x08) == 0 ? true : false;
         interpretation['coverOpen'] = (statusByte & 0x20) != 0 ? true : false;
         interpretation['paperFeed'] = (statusByte & 0x40) != 0 ? true : false;
         interpretation['error'] = (statusByte & 0x80) != 0 ? true : false;
+        interpretation['unknown_bit4'] =
+            (statusByte & 0x10) != 0 ? true : false; // Bit 4 específico
         break;
 
       case 0x02: // Estado offline
@@ -1871,6 +1177,7 @@ class UsbPlugin {
 
     interpretation['rawByte'] =
         '0x${statusByte.toRadixString(16).padLeft(2, "0")}';
+    interpretation['binaryBits'] = bits;
 
     return interpretation;
   }
@@ -1938,5 +1245,76 @@ class UsbPlugin {
     }
 
     print('\n========================================');
+  }
+
+  /// Función de depuración para analizar el byte
+  void analyzeStatusByte(int statusByte) {
+    String bits = statusByte.toRadixString(2).padLeft(8, "0");
+    print(
+        '\n==== ANÁLISIS DE BYTE DE ESTADO: ${statusByte} (0x${statusByte.toRadixString(16).padLeft(2, "0")}) ====');
+    print('Representación binaria: $bits');
+    print(
+        'Bit 0 (LSB): ${(statusByte & 0x01) != 0 ? "1" : "0"} - ${describeBit(0, statusByte & 0x01)}');
+    print(
+        'Bit 1: ${(statusByte & 0x02) != 0 ? "1" : "0"} - ${describeBit(1, statusByte & 0x02)}');
+    print(
+        'Bit 2: ${(statusByte & 0x04) != 0 ? "1" : "0"} - ${describeBit(2, statusByte & 0x04)}');
+    print(
+        'Bit 3: ${(statusByte & 0x08) != 0 ? "1" : "0"} - ${describeBit(3, statusByte & 0x08)}');
+    print(
+        'Bit 4: ${(statusByte & 0x10) != 0 ? "1" : "0"} - ${describeBit(4, statusByte & 0x10)}');
+    print(
+        'Bit 5: ${(statusByte & 0x20) != 0 ? "1" : "0"} - ${describeBit(5, statusByte & 0x20)}');
+    print(
+        'Bit 6: ${(statusByte & 0x40) != 0 ? "1" : "0"} - ${describeBit(6, statusByte & 0x40)}');
+    print(
+        'Bit 7 (MSB): ${(statusByte & 0x80) != 0 ? "1" : "0"} - ${describeBit(7, statusByte & 0x80)}');
+    print('========================================');
+  }
+
+  /// Función auxiliar para describir la función de cada bit según el estándar ESC/POS común
+  String describeBit(int bitPosition, int bitValue) {
+    bool isSet = bitValue != 0;
+    switch (bitPosition) {
+      case 0:
+        return "Posiblemente reservado/específico del modelo";
+      case 1:
+        return isSet ? "Posible indicador adicional de gaveta" : "Normal";
+      case 2:
+        return isSet ? "Gaveta abierta" : "Gaveta cerrada";
+      case 3:
+        return isSet ? "Impresora OFFLINE" : "Impresora ONLINE";
+      case 4:
+        return isSet
+            ? "Indicador específico del modelo (Podría ser sensor de papel)"
+            : "Normal";
+      case 5:
+        return isSet ? "Tapa ABIERTA" : "Tapa CERRADA";
+      case 6:
+        return isSet
+            ? "Alimentación de papel manual activada"
+            : "Alimentación de papel normal";
+      case 7:
+        return isSet ? "ERROR presente" : "Sin error";
+      default:
+        return "Desconocido";
+    }
+  }
+
+  /// Función para crear un diagrama visual de los bits de un byte
+  String createBitDiagram(int statusByte) {
+    String bits = statusByte.toRadixString(2).padLeft(8, "0");
+    String diagram = '\n+---+---+---+---+---+---+---+---+\n';
+    diagram += '| 7 | 6 | 5 | 4 | 3 | 2 | 1 | 0 | Bit\n';
+    diagram += '+---+---+---+---+---+---+---+---+\n';
+    diagram +=
+        '| ${bits[0]} | ${bits[1]} | ${bits[2]} | ${bits[3]} | ${bits[4]} | ${bits[5]} | ${bits[6]} | ${bits[7]} |\n';
+    diagram += '+---+---+---+---+---+---+---+---+\n';
+    diagram +=
+        '| ${(statusByte & 0x80) != 0 ? "E" : " "} | ${(statusByte & 0x40) != 0 ? "F" : " "} | ${(statusByte & 0x20) != 0 ? "C" : " "} | ${(statusByte & 0x10) != 0 ? "?" : " "} | ${(statusByte & 0x08) != 0 ? "O" : " "} | ${(statusByte & 0x04) != 0 ? "D" : " "} | ${(statusByte & 0x02) != 0 ? "d" : " "} | ${(statusByte & 0x01) != 0 ? "R" : " "} |\n';
+    diagram += '+---+---+---+---+---+---+---+---+\n';
+    diagram +=
+        ' E=Error, F=Feed, C=Cover, ?=Unknown, O=Offline, D=Drawer, d=drawer2, R=Reserved';
+    return diagram;
   }
 }
