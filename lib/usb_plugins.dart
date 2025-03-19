@@ -6,7 +6,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
-import 'package:usb_plugins/usb_device_info.dart';
+import 'package:usb_plugins_printer/usb_device_info.dart';
 import 'libusb_bindings_generated.dart';
 
 class UsbPlugin {
@@ -903,7 +903,7 @@ class UsbPlugin {
         statusInfo['isConnected'] = true;
         statusInfo['rawData'] = receivedData;
         statusInfo['binaryResponse'] =
-            readResult.toRadixString(2).padLeft(8, '0');
+            receivedData[0].toRadixString(2).padLeft(8, '0');
         statusInfo['statusType'] = statusType;
 
         // Interpretar los datos según el tipo de estado
@@ -989,8 +989,7 @@ class UsbPlugin {
     String bits = statusByte.toRadixString(2).padLeft(8, '0');
 
     log('\n==== ESTADO DE LA IMPRESORA 3NSTART RPT008 ====');
-    log(
-        'Byte recibido: 0x${statusByte.toRadixString(16).padLeft(2, "0")} ($statusByte)');
+    log('Byte recibido: 0x${statusByte.toRadixString(16).padLeft(2, "0")} ($statusByte)');
     log('Representación binaria: $bits');
 
     // Analizar cada bit individualmente
@@ -1025,13 +1024,11 @@ class UsbPlugin {
     log('+---+---+---+---+---+---+---+---+');
     log('| 7 | 6 | 5 | 4 | 3 | 2 | 1 | 0 | Posición');
     log('+---+---+---+---+---+---+---+---+');
-    log(
-        '| ${bits[0]} | ${bits[1]} | ${bits[2]} | ${bits[3]} | ${bits[4]} | ${bits[5]} | ${bits[6]} | ${bits[7]} | Valor');
+    log('| ${bits[0]} | ${bits[1]} | ${bits[2]} | ${bits[3]} | ${bits[4]} | ${bits[5]} | ${bits[6]} | ${bits[7]} | Valor');
     log('+---+---+---+---+---+---+---+---+');
     log('| E | F | C | S | O | D1| D2| R | Significado');
     log('+---+---+---+---+---+---+---+---+');
-    log(
-        ' E=Error, F=Feed, C=Cover, S=Sensor, O=Offline, D=Drawer, R=Reserved');
+    log(' E=Error, F=Feed, C=Cover, S=Sensor, O=Offline, D=Drawer, R=Reserved');
 
     log('\n========================================');
   }
@@ -1051,8 +1048,7 @@ class UsbPlugin {
       log('Gaveta: ${status['drawer']}');
       log('Online: ${status['online'] ? 'Sí' : 'No'}');
       log('Tapa abierta: ${status['coverOpen'] ? 'Sí' : 'No'}');
-      log(
-          'Alimentación de papel manual: ${status['paperFeed'] ? 'Activa' : 'Inactiva'}');
+      log('Alimentación de papel manual: ${status['paperFeed'] ? 'Activa' : 'Inactiva'}');
       log('Error: ${status['error'] ? 'Sí' : 'No'}');
       log('Byte recibido: ${status['rawByte']}');
     }
@@ -1064,10 +1060,8 @@ class UsbPlugin {
       log('Botón Feed presionado: ${status['paperFeedStop'] ? 'Sí' : 'No'}');
       log('Error ocurrido: ${status['errorOccurred'] ? 'Sí' : 'No'}');
       log('Offline: ${status['offline'] ? 'Sí' : 'No'}');
-      log(
-          'Error auto-recuperable: ${status['autoRecoverableError'] ? 'Sí' : 'No'}');
-      log(
-          'Esperando volver online: ${status['waitingForOnline'] ? 'Sí' : 'No'}');
+      log('Error auto-recuperable: ${status['autoRecoverableError'] ? 'Sí' : 'No'}');
+      log('Esperando volver online: ${status['waitingForOnline'] ? 'Sí' : 'No'}');
       log('Byte recibido: ${status['rawByte']}');
     }
 
@@ -1075,12 +1069,9 @@ class UsbPlugin {
       final status = statusMap['errorStatus']['status'];
       log('\n-- ESTADO DE ERROR --');
       log('Error mecánico: ${status['mechanicalError'] ? 'Sí' : 'No'}');
-      log(
-          'Error auto-recuperable: ${status['autoRecoverError'] ? 'Sí' : 'No'}');
-      log(
-          'Error no recuperable: ${status['notRecoverableError'] ? 'Sí' : 'No'}');
-      log(
-          'Error en cortador: ${status['autoRecoverableCutterError'] ? 'Sí' : 'No'}');
+      log('Error auto-recuperable: ${status['autoRecoverError'] ? 'Sí' : 'No'}');
+      log('Error no recuperable: ${status['notRecoverableError'] ? 'Sí' : 'No'}');
+      log('Error en cortador: ${status['autoRecoverableCutterError'] ? 'Sí' : 'No'}');
       log('Tapa abierta: ${status['coverOpen'] ? 'Sí' : 'No'}');
       log('Sin papel: ${status['paperEmpty'] ? 'Sí' : 'No'}');
       log('Byte recibido: ${status['rawByte']}');
@@ -1091,10 +1082,8 @@ class UsbPlugin {
       log('\n-- ESTADO DEL PAPEL --');
       log('Papel por acabarse: ${status['paperNearEnd'] ? 'Sí' : 'No'}');
       log('Sin papel: ${status['paperEmpty'] ? 'Sí' : 'No'}');
-      log(
-          'Detenido por papel por acabarse: ${status['paperNearEndStop'] ? 'Sí' : 'No'}');
-      log(
-          'Detenido por falta de papel: ${status['paperEmptyStop'] ? 'Sí' : 'No'}');
+      log('Detenido por papel por acabarse: ${status['paperNearEndStop'] ? 'Sí' : 'No'}');
+      log('Detenido por falta de papel: ${status['paperEmptyStop'] ? 'Sí' : 'No'}');
       log('Byte recibido: ${status['rawByte']}');
     }
 
@@ -1104,25 +1093,16 @@ class UsbPlugin {
   /// Función de depuración para analizar el byte
   void analyzeStatusByte(int statusByte) {
     String bits = statusByte.toRadixString(2).padLeft(8, "0");
-    log(
-        '\n==== ANÁLISIS DE BYTE DE ESTADO: $statusByte (0x${statusByte.toRadixString(16).padLeft(2, "0")}) ====');
+    log('\n==== ANÁLISIS DE BYTE DE ESTADO: $statusByte (0x${statusByte.toRadixString(16).padLeft(2, "0")}) ====');
     log('Representación binaria: $bits');
-    log(
-        'Bit 0 (LSB): ${(statusByte & 0x01) != 0 ? "1" : "0"} - ${describeBit(0, statusByte & 0x01)}');
-    log(
-        'Bit 1: ${(statusByte & 0x02) != 0 ? "1" : "0"} - ${describeBit(1, statusByte & 0x02)}');
-    log(
-        'Bit 2: ${(statusByte & 0x04) != 0 ? "1" : "0"} - ${describeBit(2, statusByte & 0x04)}');
-    log(
-        'Bit 3: ${(statusByte & 0x08) != 0 ? "1" : "0"} - ${describeBit(3, statusByte & 0x08)}');
-    log(
-        'Bit 4: ${(statusByte & 0x10) != 0 ? "1" : "0"} - ${describeBit(4, statusByte & 0x10)}');
-    log(
-        'Bit 5: ${(statusByte & 0x20) != 0 ? "1" : "0"} - ${describeBit(5, statusByte & 0x20)}');
-    log(
-        'Bit 6: ${(statusByte & 0x40) != 0 ? "1" : "0"} - ${describeBit(6, statusByte & 0x40)}');
-    log(
-        'Bit 7 (MSB): ${(statusByte & 0x80) != 0 ? "1" : "0"} - ${describeBit(7, statusByte & 0x80)}');
+    log('Bit 0 (LSB): ${(statusByte & 0x01) != 0 ? "1" : "0"} - ${describeBit(0, statusByte & 0x01)}');
+    log('Bit 1: ${(statusByte & 0x02) != 0 ? "1" : "0"} - ${describeBit(1, statusByte & 0x02)}');
+    log('Bit 2: ${(statusByte & 0x04) != 0 ? "1" : "0"} - ${describeBit(2, statusByte & 0x04)}');
+    log('Bit 3: ${(statusByte & 0x08) != 0 ? "1" : "0"} - ${describeBit(3, statusByte & 0x08)}');
+    log('Bit 4: ${(statusByte & 0x10) != 0 ? "1" : "0"} - ${describeBit(4, statusByte & 0x10)}');
+    log('Bit 5: ${(statusByte & 0x20) != 0 ? "1" : "0"} - ${describeBit(5, statusByte & 0x20)}');
+    log('Bit 6: ${(statusByte & 0x40) != 0 ? "1" : "0"} - ${describeBit(6, statusByte & 0x40)}');
+    log('Bit 7 (MSB): ${(statusByte & 0x80) != 0 ? "1" : "0"} - ${describeBit(7, statusByte & 0x80)}');
     log('========================================');
   }
 

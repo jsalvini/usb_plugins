@@ -1,6 +1,6 @@
-name: usb_plugins
+name: usb_plugins_printer
 description: "Proyecto para impresión en impresoras termicas, usando libreria libusb."
-version: 0.0.2
+version: 0.0.3
 homepage: https://github.com/jsalvini/usb_plugins
 
 environment:

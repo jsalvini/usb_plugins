@@ -7,3 +7,5 @@ Incluye un registro de cambios con cada versión. Ejemplo:
 ## 0.0.2
 - Se mejora respuesta comando estado.
 - Se actualiza ejemplo.
+## 0.0.3
+- Se actualiza binaryResponse.

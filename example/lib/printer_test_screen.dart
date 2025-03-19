@@ -317,7 +317,7 @@ class _PrinterTestScreenState extends State<PrinterTestScreen> {
                             child: _StatusIndicator(
                               label: 'Poco papel',
                               isActive: paperNearEnd,
-                              positiveColor: Colors.amber,
+                              positiveColor: Colors.green,
                             ),
                           ),
                         ],
