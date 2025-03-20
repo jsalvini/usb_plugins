@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:developer';
 
 import 'package:flutter/material.dart';
-import 'package:usb_plugins/usb_plugins.dart';
+import 'package:usb_plugins_printer/usb_plugins.dart';
 
 class PrinterTestScreen extends StatefulWidget {
   const PrinterTestScreen({super.key});
@@ -401,16 +401,16 @@ class _StatusIndicator extends StatelessWidget {
 
 /*void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   print("Iniciando aplicación USB");
-  
+
   // Pausa más larga para asegurar que el depurador está conectado
   await Future.delayed(Duration(seconds: 3));
-  
+
   // Crear instancia del plugin
   final usbPlugin = UsbPlugin();
   print("Plugin USB instanciado");
-  
+
   // Inicializar la librería
   try {
     final initResult = usbPlugin.initLibUsb();
@@ -423,12 +423,12 @@ class _StatusIndicator extends StatelessWidget {
     print("Excepción al inicializar libusb: $e");
     return;
   }
-  
+
   try {
     // Obtener lista de dispositivos de forma más segura
     print("Intentando obtener lista de dispositivos...");
     List<UsbDeviceInfo> devices = [];
-    
+
     try {
       devices = usbPlugin.getDetailedDeviceList();
       print("Dispositivos encontrados: ${devices.length}");
@@ -436,62 +436,62 @@ class _StatusIndicator extends StatelessWidget {
       print("Error al obtener lista de dispositivos: $e");
       return;
     }
-    
+
     // Procesar dispositivos en lotes pequeños con pausas
     int batchSize = 2;  // Procesar solo 2 dispositivos a la vez
-    
+
     for (int i = 0; i < devices.length; i += batchSize) {
       print("Procesando lote ${i ~/ batchSize + 1}...");
-      
+
       int endIndex = (i + batchSize < devices.length) ? i + batchSize : devices.length;
-      
+
       for (int j = i; j < endIndex; j++) {
         final device = devices[j];
-        
+
         // Imprimir información básica
         print('Dispositivo $j - productId: 0x${device.productId.toRadixString(16)} - vendorId: 0x${device.vendorId.toRadixString(16)}');
-        
+
         // Evitar procesar la impresora problemática hasta el final
         if (device.vendorId == 0x067b && device.productId == 0x2305) {
           print("Impresora detectada - procesamiento pospuesto");
           continue;
         }
       }
-      
+
       // Pausa entre lotes
       await Future.delayed(Duration(seconds: 1));
       print("Lote ${i ~/ batchSize + 1} completado");
     }
-    
+
     // Imprimir información de resumen
     print("Resumen de dispositivos encontrados:");
     for (int i = 0; i < devices.length; i++) {
       final device = devices[i];
       print('${i+1}. VendorID: 0x${device.vendorId.toRadixString(16)}, ProductID: 0x${device.productId.toRadixString(16)}, Bus: ${device.busNumber}, Dirección: ${device.deviceAddress}');
     }
-    
+
     // Al final, intentar procesar la impresora por separado con manejo de errores específico
     print("Buscando dispositivo de impresora...");
     UsbDeviceInfo? printerDevice;
-    
+
     for (final device in devices) {
       if (device.vendorId == 0x067b && device.productId == 0x2305) {
         printerDevice = device;
         break;
       }
     }
-    
+
     if (printerDevice != null) {
       print("Impresora encontrada - Información básica:");
       print("Bus: ${printerDevice.busNumber}");
       print("Dirección: ${printerDevice.deviceAddress}");
       print("Clase: 0x${printerDevice.deviceClass.toRadixString(16)}");
-      
+
       print("Terminando sin intentar obtener detalles avanzados para prevenir crash");
     } else {
       print("Impresora no encontrada en esta ejecución");
     }
-    
+
   } catch (e) {
     print("Error durante el procesamiento: $e");
   } finally {
@@ -504,6 +504,6 @@ class _StatusIndicator extends StatelessWidget {
       print("Error al cerrar libusb: $e");
     }
   }
-  
+
   print("Programa finalizado");
 }*/
