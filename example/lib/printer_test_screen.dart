@@ -36,13 +36,13 @@ class _PrinterTestScreenState extends State<PrinterTestScreen> {
   @override
   void dispose() {
     if (isInitialized) {
-      usbPlugin.exitLibUsb();
+      usbPlugin.exitUsbLibrary();
     }
     super.dispose();
   }
 
   Future<void> _initializeUsbPlugin() async {
-    final initResult = usbPlugin.initLibUsb();
+    final initResult = usbPlugin.initUsbLibrary();
     if (initResult != 0) {
       setState(() {
         statusMessage = 'Error initializing libusb: $initResult';
