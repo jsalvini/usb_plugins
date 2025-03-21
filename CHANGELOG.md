@@ -9,3 +9,6 @@ Incluye un registro de cambios con cada versión. Ejemplo:
 - Se actualiza ejemplo.
 ## 0.0.3
 - Se actualiza binaryResponse.
+## 0.0.4
+- Se actualiza endpointOut y endpointIn dinamicos.
+- Se actualiza ejemplo.
