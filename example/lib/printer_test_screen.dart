@@ -1,7 +1,7 @@
 import 'dart:convert';
-import 'dart:developer';
 
 import 'package:flutter/material.dart';
+import 'package:usb_plugins_printer/usb_device_info.dart';
 import 'package:usb_plugins_printer/usb_plugins.dart';
 
 class PrinterTestScreen extends StatefulWidget {
@@ -17,9 +17,13 @@ class _PrinterTestScreenState extends State<PrinterTestScreen> {
   String statusMessage = "Not initialized";
   String debugText = '';
 
-  // Printer IDs
-  final int vendorId = 0x067b;
-  final int productId = 0x2305;
+  // Printer IDs 3NSTAR
+  //final int vendorId = 0x067b;
+  //final int productId = 0x2305;
+
+// Printer IDs EPSON
+  final int vendorId = 0x04b8; // Epson
+  final int productId = 0x0202; // TM-88V
 
   // Printer status results
   bool isOnline = false;
@@ -31,6 +35,7 @@ class _PrinterTestScreenState extends State<PrinterTestScreen> {
   void initState() {
     super.initState();
     _initializeUsbPlugin();
+    _listDevices();
   }
 
   @override
@@ -152,23 +157,36 @@ class _PrinterTestScreenState extends State<PrinterTestScreen> {
           await usbPlugin.getPrinterStatus(vendorId, productId, [16, 4, 1]);
 
       if (!printerStatus['success']) {
-        log('Connection error: ${printerStatus['error']}');
-        log('The printer appears to be off or disconnected');
+        debugText += ('Connection error: ${printerStatus['error']}\n');
+        debugText += ('The printer appears to be off or disconnected\n');
+        setState(() {
+          isOnline = false;
+          coverOpen = false;
+          paperOut = false;
+          paperNearEnd = false;
+          debugText = printerStatus['error'] ?? 'No debug information received';
+
+          statusMessage = 'Status updated. Check the debug section.';
+        });
         return; // Do not continue if there is a fundamental connection error
       }
 
-      log('Printer status: $printerStatus');
-      log('Is printer online? ${printerStatus['isOnline']}');
+      debugText += ('Printer status: $printerStatus\n');
+      debugText += ('Is printer online? ${printerStatus['isOnline']}\n');
+
+      debugText += 'Printer status: $printerStatus\n';
 
       // Check cover status only if the printer is connected
       if (printerStatus['success']) {
         final coverStatus =
             await usbPlugin.getPrinterStatus(vendorId, productId, [16, 4, 2]);
         if (coverStatus['success']) {
-          log('Is cover open? ${coverStatus['isCoverOpen'] ? 'Yes' : 'No'}');
-          log('Cover status: $coverStatus');
+          debugText +=
+              ('Is cover open? ${coverStatus['isCoverOpen'] ? 'Yes' : 'No'}\n');
+          debugText += ('Cover status: $coverStatus');
         } else {
-          log('Could not determine cover status: ${coverStatus['error']}');
+          debugText +=
+              ('Could not determine cover status: ${coverStatus['error']}\n');
         }
 
         final paperStatus =
@@ -177,39 +195,129 @@ class _PrinterTestScreenState extends State<PrinterTestScreen> {
         if (paperStatus['success'] && paperStatus.containsKey('paperStatus')) {
           var paper = paperStatus['paperStatus'];
           if (paper['paperPresent']) {
-            log('There is paper in the printer');
-            log(paper['paperNearEnd']
-                ? 'WARNING: Paper is running low'
-                : 'Paper quantity is adequate');
+            debugText += ('There is paper in the printer\n');
+            debugText += (paper['paperNearEnd']
+                ? 'WARNING: Paper is running low\n'
+                : 'Paper quantity is adequate\n');
           } else {
-            log('ERROR: No paper in the printer');
+            debugText += ('ERROR: No paper in the printer\n');
           }
           setState(() {
             paperOut = !paper['paperPresent'];
             paperNearEnd = paper['paperNearEnd'];
           });
         } else {
-          log('Could not determine paper status: ${paperStatus['error'] ?? 'Unknown error'}');
+          debugText +=
+              ('Could not determine paper status: ${paperStatus['error'] ?? 'Unknown error'}\n');
         }
 
         setState(() {
           isOnline = printerStatus['isOnline'];
           coverOpen = coverStatus['isCoverOpen'];
           // Save debug information
-          debugText = printerStatus['error'] ?? 'No debug information received';
+          if (printerStatus['error'] != null) {
+            debugText += 'Error ${printerStatus['error']}\n';
+          }
 
           statusMessage = 'Status updated. Check the debug section.';
         });
 
-        print("Response 1: $printerStatus");
-        print("Response 2: $coverStatus");
-        print("Response 3: $paperStatus");
+        //print("Response 1: $printerStatus");
+        //print("Response 2: $coverStatus");
+        //print("Response 3: $paperStatus");
       }
     } catch (e) {
       setState(() {
         statusMessage = 'Error checking status: $e';
         debugText = 'Exception: $e';
       });
+    }
+  }
+
+  Future<void> _listDevices() async {
+    try {
+      // Get device list more safely
+      print("Attempting to get device list...");
+      List<UsbDeviceInfo> devices = [];
+
+      try {
+        devices = usbPlugin.getDetailedDeviceList();
+        print("Devices found: ${devices.length}");
+      } catch (e) {
+        print("Error getting device list: $e");
+        return;
+      }
+
+      // Process devices in small batches with pauses
+      int batchSize = 2; // Process only 2 devices at a time
+
+      for (int i = 0; i < devices.length; i += batchSize) {
+        print("Processing batch ${i ~/ batchSize + 1}...");
+
+        int endIndex =
+            (i + batchSize < devices.length) ? i + batchSize : devices.length;
+
+        for (int j = i; j < endIndex; j++) {
+          final device = devices[j];
+
+          // Print basic information
+          print(
+              'Device $j - productId: 0x${device.productId.toRadixString(16)} - vendorId: 0x${device.vendorId.toRadixString(16)}');
+
+          // Avoid processing the problematic printer until the end
+          if (device.vendorId == vendorId && device.productId == productId) {
+            print("Printer detected - processing postponed");
+
+            continue;
+          }
+        }
+
+        // Pause between batches
+        await Future.delayed(Duration(seconds: 1));
+        print("Batch ${i ~/ batchSize + 1} completed");
+      }
+
+      // Print summary information
+      print("Summary of devices found:");
+      for (int i = 0; i < devices.length; i++) {
+        final device = devices[i];
+        print(
+            '${i + 1}. VendorID: 0x${device.vendorId.toRadixString(16)}, ProductID: 0x${device.productId.toRadixString(16)}, Bus: ${device.busNumber}, Address: ${device.deviceAddress}');
+      }
+
+      // At the end, try to process the printer separately with specific error handling
+      print("Searching for printer device...");
+      UsbDeviceInfo? printerDevice;
+
+      for (final device in devices) {
+        if (device.vendorId == vendorId && device.productId == productId) {
+          printerDevice = device;
+          break;
+        }
+      }
+
+      if (printerDevice != null) {
+        print("Printer found - Basic information:");
+        print("Bus: ${printerDevice.busNumber}");
+        print("Address: ${printerDevice.deviceAddress}");
+        print("Class: 0x${printerDevice.deviceClass.toRadixString(16)}");
+
+        print(
+            "Terminating without attempting to get advanced details to prevent crash");
+      } else {
+        print("Printer not found in this execution");
+      }
+    } catch (e) {
+      print("Error during processing: $e");
+    } finally {
+      try {
+        // Close the library when finished
+        //print("Closing libusb...");
+        //usbPlugin.exitUsbLibrary();
+        //print("libusb closed successfully");
+      } catch (e) {
+        print("Error closing libusb: $e");
+      }
     }
   }
 
@@ -422,84 +530,7 @@ class _StatusIndicator extends StatelessWidget {
     return;
   }
 
-  try {
-    // Get device list more safely
-    print("Attempting to get device list...");
-    List<UsbDeviceInfo> devices = [];
-
-    try {
-      devices = usbPlugin.getDetailedDeviceList();
-      print("Devices found: ${devices.length}");
-    } catch (e) {
-      print("Error getting device list: $e");
-      return;
-    }
-
-    // Process devices in small batches with pauses
-    int batchSize = 2; // Process only 2 devices at a time
-
-    for (int i = 0; i < devices.length; i += batchSize) {
-      print("Processing batch ${i ~/ batchSize + 1}...");
-
-      int endIndex = (i + batchSize < devices.length) ? i + batchSize : devices.length;
-
-      for (int j = i; j < endIndex; j++) {
-        final device = devices[j];
-
-        // Print basic information
-        print('Device $j - productId: 0x${device.productId.toRadixString(16)} - vendorId: 0x${device.vendorId.toRadixString(16)}');
-
-        // Avoid processing the problematic printer until the end
-        if (device.vendorId == 0x067b && device.productId == 0x2305) {
-          print("Printer detected - processing postponed");
-          continue;
-        }
-      }
-
-      // Pause between batches
-      await Future.delayed(Duration(seconds: 1));
-      print("Batch ${i ~/ batchSize + 1} completed");
-    }
-
-    // Print summary information
-    print("Summary of devices found:");
-    for (int i = 0; i < devices.length; i++) {
-      final device = devices[i];
-      print('${i+1}. VendorID: 0x${device.vendorId.toRadixString(16)}, ProductID: 0x${device.productId.toRadixString(16)}, Bus: ${device.busNumber}, Address: ${device.deviceAddress}');
-    }
-
-    // At the end, try to process the printer separately with specific error handling
-    print("Searching for printer device...");
-    UsbDeviceInfo? printerDevice;
-
-    for (final device in devices) {
-      if (device.vendorId == 0x067b && device.productId == 0x2305) {
-        printerDevice = device;
-        break;
-      }
-    }
-
-    if (printerDevice != null) {
-      print("Printer found - Basic information:");
-      print("Bus: ${printerDevice.busNumber}");
-      print("Address: ${printerDevice.deviceAddress}");
-      print("Class: 0x${printerDevice.deviceClass.toRadixString(16)}");
-
-      print("Terminating without attempting to get advanced details to prevent crash");
-    } else {
-      print("Printer not found in this execution");
-    }
-  } catch (e) {
-    print("Error during processing: $e");
-  } finally {
-    try {
-      // Close the library when finished
-      print("Closing libusb...");
-      usbPlugin.exitLibUsb();
-      print("libusb closed successfully");
-    } catch (e) {
-      print("Error closing libusb: $e");
-    }
+  
   }
 
   print("Program finished");

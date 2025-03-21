@@ -142,7 +142,7 @@ class UsbPlugin {
   }
 
   // Helper method to get string descriptors
-  String ? _getStringDescriptor(
+  String? _getStringDescriptor(
       Pointer<libusb_device_handle> handle, int index) {
     if (index == 0) {
       return null;
@@ -166,14 +166,49 @@ class UsbPlugin {
 
   // Methods to open and close devices
   Pointer<libusb_device_handle>? openDevice(int vendorId, int productId) {
-    final handle =
-        _bindings.libusb_open_device_with_vid_pid(nullptr, vendorId, productId);
+    final deviceListPtr = calloc<Pointer<Pointer<libusb_device>>>();
+    final ctxPtr = calloc<Pointer<libusb_context>>();
 
-    if (handle == nullptr) {
+    if (_bindings.libusb_init(ctxPtr) < 0) {
       return null;
     }
 
-    return handle;
+    int deviceCount =
+        _bindings.libusb_get_device_list(ctxPtr.value, deviceListPtr);
+    if (deviceCount < 0) {
+      return null;
+    }
+
+    for (int i = 0; i < deviceCount; i++) {
+      final device = deviceListPtr.value[i];
+      final descriptor = calloc<libusb_device_descriptor>();
+
+      if (_bindings.libusb_get_device_descriptor(device, descriptor) == 0) {
+        if (descriptor.ref.idVendor == vendorId &&
+            descriptor.ref.idProduct == productId) {
+          final handlePtr = calloc<Pointer<libusb_device_handle>>();
+          int openResult = _bindings.libusb_open(device, handlePtr);
+
+          if (openResult < 0) {
+            final errorMsg = _bindings
+                .libusb_error_name(openResult)
+                .cast<Utf8>()
+                .toDartString();
+            log("Error open device: $errorMsg (Code: $openResult)");
+            calloc.free(descriptor);
+            continue;
+          }
+
+          //log("Open device Ok");
+          calloc.free(descriptor);
+          return handlePtr.value;
+        }
+      }
+      calloc.free(descriptor);
+    }
+
+    _bindings.libusb_free_device_list(deviceListPtr.value, 1);
+    return null;
   }
 
   void closeDevice(Pointer<libusb_device_handle> handle) {
@@ -194,11 +229,110 @@ class UsbPlugin {
         handle, requestType, request, value, index, data, length, timeout);
   }
 
+  Pointer<libusb_device>? getDevice(int vendorId, int productId) {
+    final deviceListPtr = calloc<Pointer<Pointer<libusb_device>>>();
+    final ctxPtr = calloc<Pointer<libusb_context>>();
+
+    if (_bindings.libusb_init(ctxPtr) < 0) {
+      log("Error inicializando libusb");
+      return null;
+    }
+
+    int deviceCount =
+        _bindings.libusb_get_device_list(ctxPtr.value, deviceListPtr);
+    if (deviceCount < 0) {
+      log("Could not get device list");
+      return null;
+    }
+
+    for (int i = 0; i < deviceCount; i++) {
+      final device = deviceListPtr.value[i];
+      final descriptor = calloc<libusb_device_descriptor>();
+
+      if (_bindings.libusb_get_device_descriptor(device, descriptor) == 0) {
+        if (descriptor.ref.idVendor == vendorId &&
+            descriptor.ref.idProduct == productId) {
+          log("USB device found -> vendorId: $vendorId - productId: $productId");
+          calloc.free(descriptor);
+          return device; // 🔹 Retornar el dispositivo, no solo el handle
+        }
+      }
+      calloc.free(descriptor);
+    }
+
+    _bindings.libusb_free_device_list(deviceListPtr.value, 1);
+    return null;
+  }
+
+  List<int> getDeviceEndpoints(Pointer<libusb_device> device) {
+    log("📌 Starting endpoint search...");
+
+    final configDescriptor = calloc<Pointer<libusb_config_descriptor>>();
+    //log("📌 Memoria asignada para configDescriptor");
+
+    // 🔹 Cambiamos `nullptr` por el `device` correcto
+    final result =
+        _bindings.libusb_get_active_config_descriptor(device, configDescriptor);
+    //log("📌 Resultado de get_active_config_descriptor: $result");
+
+    if (result < 0) {
+      //log("❌ Error al obtener configuración: ${_bindings.libusb_error_name(result).cast<Utf8>().toDartString()}");
+      calloc.free(configDescriptor);
+      return [];
+    }
+
+    final config = configDescriptor.value;
+    //log("📌 Configuración obtenida con éxito");
+
+    List<int> endpoints = [];
+
+    //log("📌 Número de interfaces: ${config.ref.bNumInterfaces}");
+    for (int i = 0; i < config.ref.bNumInterfaces; i++) {
+      final interfacePointer = config.ref.interface1;
+
+      if (interfacePointer.address == 0) {
+        //log("❌ No se encontraron interfaces en la configuración.");
+        _bindings.libusb_free_config_descriptor(config);
+        return [];
+      }
+
+      final interface = (interfacePointer + i).ref;
+      //log("📌 Interfaz $i: número de configuraciones ${interface.num_altsetting}");
+
+      for (int j = 0; j < interface.num_altsetting; j++) {
+        final altsetting = (interface.altsetting + j).ref;
+        //log("📌 Configuración alternativa $j con ${altsetting.bNumEndpoints} endpoints");
+
+        for (int k = 0; k < altsetting.bNumEndpoints; k++) {
+          final endpoint = (altsetting.endpoint + k).ref;
+          endpoints.add(endpoint.bEndpointAddress);
+          //log("✔️ Endpoint encontrado: ${endpoint.bEndpointAddress.toRadixString(16)}");
+        }
+      }
+    }
+
+    _bindings.libusb_free_config_descriptor(config);
+    log("📌 Configuration released successfully");
+
+    return endpoints;
+  }
+
   // Method to get additional device details
   Map<String, dynamic> getDeviceDetails(int vendorId, int productId) {
-    final handle = openDevice(vendorId, productId);
-    if (handle == null) {
-      return {'error': 'Could not open device'};
+    final deviceHandlePtr =
+        _bindings.libusb_open_device_with_vid_pid(nullptr, vendorId, productId);
+
+    if (deviceHandlePtr == nullptr) {
+      final errorCode =
+          -1; // No hay un código de error directo, usamos un valor genérico
+      final errorMessage = "Could not open device (unknown error)";
+      log("Error al abrir el dispositivo: $errorMessage (Código: $errorCode)");
+
+      return {
+        'error': 'Could not open device',
+        'errorCode': errorCode,
+        'message': errorMessage
+      };
     }
 
     try {
@@ -211,7 +345,9 @@ class UsbPlugin {
       if (result < 0) {
         return {
           'error': 'Could not obtain configuration descriptor',
-          'errorCode': result
+          'errorCode': result,
+          'message':
+              _bindings.libusb_error_name(result).cast<Utf8>().toDartString()
         };
       }
 
@@ -227,14 +363,12 @@ class UsbPlugin {
       log("Number of interfaces: $numInterfaces");
 
       for (int i = 0; i < numInterfaces; i++) {
-        final interfaceNumber = _bindings.libusb_claim_interface(handle, i);
-
-        Map<String, dynamic> interfaceInfo = {
+        final interfaceNumber =
+            _bindings.libusb_claim_interface(deviceHandlePtr, i);
+        interfaces.add({
           'interfaceNumber': interfaceNumber,
-          'endpoints': <Map<String, dynamic>>[]
-        };
-
-        interfaces.add(interfaceInfo);
+          'endpoints': [],
+        });
       }
 
       // Free resources
@@ -246,9 +380,7 @@ class UsbPlugin {
         'selfPowered': (config.ref.bmAttributes & 0x40) != 0,
         'remoteWakeup': (config.ref.bmAttributes & 0x20) != 0,
         'numInterfaces': numInterfaces,
-        'interfaces': interfaces,
-        'note':
-            'Interface information limited due to generated structure'
+        'interfaces': interfaces
       };
     } catch (e) {
       return {
@@ -256,7 +388,7 @@ class UsbPlugin {
         'message': e.toString()
       };
     } finally {
-      closeDevice(handle);
+      closeDevice(deviceHandlePtr);
     }
   }
 
@@ -267,8 +399,6 @@ class UsbPlugin {
     int productId,
     Uint8List data, {
     int interfaceNumber = 0,
-    int endpointAddress = 0x01,
-    int readEndpointAddress = 0x81,
     int timeout = 10000,
     bool expectResponse = false,
     int maxResponseLength = 256,
@@ -280,6 +410,26 @@ class UsbPlugin {
     }
 
     final handle = handleNullable;
+    // 🔹 2️⃣ Obtener los endpoints correctos
+    final device = getDevice(vendorId, productId);
+    if (device == null) {
+      log("❌ No se pudo encontrar el dispositivo USB");
+      return {'success': false, 'error': 'No se pudo encontrar el dispositivo'};
+    }
+
+    final endpoints = getDeviceEndpoints(device);
+    if (endpoints.isEmpty) {
+      return {'success': false, 'error': 'No se encontraron endpoints válidos'};
+    }
+
+    // Detectar OUT (escritura) e IN (lectura)
+    int endpointOut =
+        endpoints.firstWhere((e) => e & 0x80 == 0, orElse: () => 0x01);
+    int endpointIn =
+        endpoints.firstWhere((e) => e & 0x80 != 0, orElse: () => 0x82);
+
+    //log("✔️ Endpoint OUT: ${endpointOut.toRadixString(16)}");
+    //log("✔️ Endpoint IN: ${endpointIn.toRadixString(16)}");
 
     try {
       int hasKernelDriver = 0;
@@ -323,8 +473,7 @@ class UsbPlugin {
       if (claimResult < 0) {
         return {
           'success': false,
-          'error':
-              'Could not claim interface after $maxAttempts attempts',
+          'error': 'Could not claim interface after $maxAttempts attempts',
           'errorCode': claimResult,
           'errorDescription': _getUsbErrorDescription(claimResult)
         };
@@ -336,14 +485,9 @@ class UsbPlugin {
 
       final transferredPtr = calloc<Int>();
 
-      log("Sending ${data.length} bytes to endpoint $endpointAddress...");
-      int transferResult = _bindings.libusb_bulk_transfer(
-          handle,
-          endpointAddress,
-          buffer.cast<UnsignedChar>(),
-          data.length,
-          transferredPtr,
-          timeout);
+      log("Sending ${data.length} bytes to endpoint $endpointOut...");
+      int transferResult = _bindings.libusb_bulk_transfer(handle, endpointOut,
+          buffer.cast<UnsignedChar>(), data.length, transferredPtr, timeout);
 
       await Future.delayed(Duration(milliseconds: 5000));
 
@@ -374,10 +518,10 @@ class UsbPlugin {
 
         await Future.delayed(Duration(milliseconds: 800));
 
-        log("Reading response from endpoint $readEndpointAddress...");
+        log("Reading response from endpoint $endpointIn...");
         final responseResult = _bindings.libusb_bulk_transfer(
             handle,
-            readEndpointAddress,
+            endpointIn,
             responseBuffer.cast<UnsignedChar>(),
             maxResponseLength,
             responseTransferredPtr,
@@ -444,8 +588,7 @@ class UsbPlugin {
       final deviceDescriptor = calloc<libusb_device_descriptor>();
       final descResult =
           _bindings.libusb_get_device_descriptor(device, deviceDescriptor);
-      if (descResult < 0
-        ) {
+      if (descResult < 0) {
         calloc.free(deviceDescriptor);
         return {
           'success': false,
@@ -585,7 +728,6 @@ class UsbPlugin {
       if (claimResult == 0) {
         return {'success': true, 'interfaceNumber': interfaceNumber};
       }
-
     }
 
     return {'success': false, 'error': 'No valid interface found'};
@@ -624,20 +766,6 @@ class UsbPlugin {
         return 'Unknown error code: $errorCode';
     }
   }
-
-  // Specific method for ESC/POS printers
-  /*Future<Map<String, dynamic>> printEscPos(
-    int vendorId,
-    int productId,
-    List<int> commandBytes,
-    {int timeout = 5000}) async {
-
-  // Convert List<int> to Uint8List
-  final data = Uint8List.fromList(commandBytes);
-
-  // Send commands to the printer
-  return await sendDataToPrinter(vendorId, productId, data, timeout: timeout);
-}*/
 
   // Modified printEscPos method to allow receiving response if needed
   Future<Map<String, dynamic>> printEscPos(
@@ -678,8 +806,6 @@ class UsbPlugin {
       productId,
       data,
       interfaceNumber: interfaceNumber,
-      endpointAddress: endpointAddress,
-      readEndpointAddress: readEndpointAddress,
       timeout: timeout,
       expectResponse: expectResponse,
     );
@@ -693,8 +819,6 @@ class UsbPlugin {
         productId,
         data,
         interfaceNumber: interfaceNumber,
-        endpointAddress: 0x02,
-        readEndpointAddress: readEndpointAddress,
         timeout: timeout,
         expectResponse: expectResponse,
       );
@@ -708,13 +832,11 @@ class UsbPlugin {
     int productId,
     List<int> command, {
     int interfaceNumber = 0,
-    int endpointAddress = 0x01,
-    int readEndpointAddress = 0x81,
     int timeout = 10000,
     bool expectResponse = false,
     int maxResponseLength = 542,
   }) async {
-    // Open the device
+    // 🔹 1️⃣ Open the device
     final Pointer<libusb_device_handle>? handleNullable =
         openDevice(vendorId, productId);
     if (handleNullable == nullptr || handleNullable == null) {
@@ -726,8 +848,26 @@ class UsbPlugin {
       };
     }
 
-    // Convert from Pointer? to Pointer ```dart
-    // now that we know it's not null
+    // 🔹 2️⃣ Obtener los endpoints correctos
+    final device = getDevice(vendorId, productId);
+    if (device == null) {
+      //log("❌ The USB device could not be found");
+      return {'success': false, 'error': 'The device could not be found.'};
+    }
+
+    final endpoints = getDeviceEndpoints(device);
+    if (endpoints.isEmpty) {
+      return {'success': false, 'error': 'No valid endpoints found'};
+    }
+
+    // Detect OUT (write) eN (read)
+    int endpointOut =
+        endpoints.firstWhere((e) => e & 0x80 == 0, orElse: () => 0x01);
+    int endpointIn =
+        endpoints.firstWhere((e) => e & 0x80 != 0, orElse: () => 0x82);
+
+    log("✔️ Endpoint OUT: ${endpointOut.toRadixString(16)} - Endpoint IN: ${endpointIn.toRadixString(16)}");
+
     final handle = handleNullable;
 
     Map<String, dynamic> statusInfo = {
@@ -744,26 +884,27 @@ class UsbPlugin {
           hasKernelDriver =
               _bindings.libusb_kernel_driver_active(handle, interfaceNumber);
           if (hasKernelDriver == 1) {
-            log("Detaching kernel driver...");
+            //log("Detaching kernel driver...");
             final detachResult =
                 _bindings.libusb_detach_kernel_driver(handle, interfaceNumber);
             if (detachResult < 0) {
-              log("Could not detach kernel driver: $detachResult");
+              //log("Could not detach kernel driver: $detachResult");
             } else {
-              log("Kernel driver detached successfully");
+              //log("Kernel driver detached successfully");
             }
           }
         } catch (e) {
-          log("Error checking/detaching kernel driver: $e");
+          //log("Error checking/detaching kernel driver: $e");
         }
       }
 
       // Configure the device if necessary
       final configResult = _bindings.libusb_set_configuration(handle, 1);
       if (configResult < 0) {
-        log("Warning: Could not set configuration: $configResult");
+        //log("Warning: Could not set configuration: $configResult");
       }
 
+      // 🔹 3️⃣ Reclamar la interfaz antes de transferir datos
       // Claim the interface with multiple attempts
       int claimResult = -1;
       int attempts = 0;
@@ -773,7 +914,7 @@ class UsbPlugin {
         claimResult = _bindings.libusb_claim_interface(handle, interfaceNumber);
         if (claimResult == 0) break;
 
-        log("Attempt ${attempts + 1} failed with error $claimResult. Retrying...");
+        //log("Attempt ${attempts + 1} failed with error $claimResult. Retrying...");
         await Future.delayed(Duration(milliseconds: 500));
         attempts++;
       }
@@ -787,20 +928,16 @@ class UsbPlugin {
         };
       }
 
+      // 🔹 4️⃣ Enviar el comando a la impresora
       final buffer = calloc<Uint8>(command.length);
       final bufferList = buffer.asTypedList(command.length);
       bufferList.setAll(0, command);
 
       final transferredPtr = calloc<Int>();
 
-      log("Sending command $command...");
-      int transferResult = _bindings.libusb_bulk_transfer(
-          handle,
-          endpointAddress,
-          buffer.cast<UnsignedChar>(),
-          command.length,
-          transferredPtr,
-          timeout);
+      log("📤 Sending command $command to endpoint ${endpointOut.toRadixString(16)}...");
+      int transferResult = _bindings.libusb_bulk_transfer(handle, endpointOut,
+          buffer.cast<UnsignedChar>(), command.length, transferredPtr, timeout);
 
       await Future.delayed(Duration(milliseconds: 100));
 
@@ -809,29 +946,35 @@ class UsbPlugin {
 
       if (transferResult < 0) {
         String errorDescription = _getUsbErrorDescription(transferResult);
+        log("❌ Error sending command: $errorDescription");
         return {
           'success': false,
-          'error':
-              'Error sending command: $command, detail: $errorDescription',
+          'error': 'Error sending command: $command, detail: $errorDescription',
           'isConnected': false,
           'statusType': command.length >= 3 ? command[2] : 0
         };
       }
 
+      log("✔️ Command sent successfully");
+
+      // 🔹 5️⃣ Leer la respuesta si aplica
       Uint8List buffer2 = Uint8List(512);
       final Pointer<UnsignedChar> dataPointer =
           malloc.allocate<UnsignedChar>(buffer2.length);
       for (var i = 0; i < buffer2.length; i++) {
         dataPointer[i] = buffer[i];
+        //dataPointer[i] = 0; // Inicializar con ceros
       }
 
       final Pointer<Int> transferredPointer = malloc.allocate<Int>(1);
       transferredPointer.value = 0;
 
+      log("📥 Waiting for response on endpointIn ${endpointIn.toRadixString(16)}...");
+
       // Call the function correctly
       int readResult = _bindings.libusb_bulk_transfer(
         handle, // libusb_device_handle*
-        0x81, // unsigned char endpoint
+        endpointIn, // unsigned char endpoint
         dataPointer, // unsigned char* data
         buffer2.length, // int length
         transferredPointer, // int* transferred
@@ -860,11 +1003,25 @@ class UsbPlugin {
 
         // Interpret the data based on the status type
         if (bytesReceived > 0) {
-          switch
-          (statusType) {
+          switch (statusType) {
             case 1: // Printer status [0x10, 0x04, 0x01]
               statusInfo['isOnline'] = (receivedData[0] & (1 << 3)) == 0;
               statusInfo['cashDrawerOpen'] = (receivedData[0] & (1 << 2)) != 0;
+
+              statusInfo['waitingForRecovery'] =
+                  (receivedData[0] & (1 << 5)) != 0;
+              statusInfo['paperFeedButtonPressed'] =
+                  (receivedData[0] & (1 << 6)) != 0;
+
+              // Si está offline y esperando recuperación, podemos inferir posibles problemas
+              if (!statusInfo['isOnline'] && statusInfo['waitingForRecovery']) {
+                statusInfo['possibleErrorConditions'] = [
+                  'cover_open',
+                  'paper_end',
+                  'error_state'
+                ];
+                // No es necesario enviar el segundo comando si ya sabemos que hay un error
+              }
               break;
 
             case 2: // Offline status [0x10, 0x04, 0x02]
@@ -1059,9 +1216,7 @@ class UsbPlugin {
       case 5:
         return isSet ? "Cover OPEN" : "Cover CLOSED";
       case 6:
-        return isSet
-            ? "Manual paper feed activated"
-            : "Normal paper feed";
+        return isSet ? "Manual paper feed activated" : "Normal paper feed";
       case 7:
         return isSet ? "ERROR present" : "No error";
       default:
